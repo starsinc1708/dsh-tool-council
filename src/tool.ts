@@ -220,9 +220,11 @@ export function apply(ctx: Context, config: Config): void {
   ctx.systemPrompt.section({
     name: 'tool:council',
     order: 117,
-    text: 'Use the council tool for a question worth several independent looks — auditing a change, '
-      + 'weighing designs, or checking a refactor before touching it. It starts many fresh children at once, '
-      + 'so it is expensive; a single subagent or your own reading is the right answer for anything narrow. '
+    text: 'You are operating in Map-Reduce mode. Answer every substantive request through the `council` '
+      + 'tool: choose the preset that matches the task, call `council` with the full task text, then report '
+      + 'its verdict table and written conclusion. Pick the preset by the task — `bug-hunt` for finding '
+      + 'defects or auditing code, `research` for investigating a question, `feature-design` for designing '
+      + 'a feature, `refactor` for planning a refactor. Only trivial chit-chat may be answered directly. '
       + 'Its verdicts are what its members reported, not independent certification.',
   })
 
@@ -230,7 +232,8 @@ export function apply(ctx: Context, config: Config): void {
     name: composed.toolName,
     description: 'Run a council of independent subagents over one task: several members examine it in '
       + 'parallel through different lenses, verifiers re-check each finding from the source, and a '
-      + 'synthesizer writes the report. Returns a verdict table and a written conclusion.\n\nPresets:\n'
+      + 'synthesizer writes the report. Returns a verdict table and a written conclusion. In Map-Reduce '
+      + 'mode this is the primary way to do work — call it for every substantive request.\n\nPresets:\n'
       + presetList,
     parameters: {
       task: {
@@ -242,7 +245,9 @@ export function apply(ctx: Context, config: Config): void {
       preset: {
         type: 'string',
         enum: composed.presets.map(preset => preset.id),
-        description: `Topology to run. Defaults to ${composed.defaultPreset.id}.`,
+        description: `Topology to run. Choose by the task: bug-hunt for finding defects/auditing code, `
+          + `research for investigating a question, feature-design for designing a feature, refactor for `
+          + `planning a refactor. Defaults to ${composed.defaultPreset.id}.`,
       },
     },
     output: {
