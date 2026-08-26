@@ -121,24 +121,39 @@ export const Config: z<Config> = z.object({
 /**
  * Render the rows appended to the source composition.
  *
- * The council tool is not a cordis service — it registers into `ctx.tools` and
- * `ctx.systemPrompt` — so it needs no `isolate` realm group, which the agent
- * plane requires of service rows only.
+ * The council tool injects the workflow engine, which is a SERVICE — and on the
+ * agent plane a service row must sit inside a group carrying an `isolate` realm
+ * or it publishes process-global and collides with every other preset. So the
+ * tool ships inside its own entry-local group together with a private
+ * `workflow-worker-thread` provider, exactly mirroring the delegation group the
+ * standard preset already carries (whose isolated engine is invisible outside
+ * that group).
  * @param pluginName - module specifier to mount.
- * @param toolConfig - YAML mapping lines for the row's `config`, or empty.
+ * @param toolConfig - YAML mapping lines for the tool row's `config`, or empty.
  * @returns the YAML list entries to append.
  */
 export function composeRows(pluginName: string, toolConfig: string): string {
   const head = [
-    '# The council itself. Present on this plane and no other, which is what',
-    '# distinguishes this mode from the preset it was derived from.',
-    '- id: tool-council',
-    `  name: ${JSON.stringify(pluginName)}`,
+    '# The council itself, plus its private workflow engine. Present on this',
+    '# plane and no other, which is what distinguishes this mode from the',
+    '# preset it was derived from.',
+    '- id: council',
+    '  name: cordis:group',
+    '  group: true',
+    '  isolate:',
+    '    workflowEngine: true',
+    '  config:',
+    '    - id: council-workflow-worker',
+    "      name: '@deepseek-ai/dsh-workflow-worker-thread'",
+    '      config:',
+    '        provider: spawn',
+    '    - id: tool-council',
+    `      name: ${JSON.stringify(pluginName)}`,
   ]
   const body = toolConfig.trim()
   if (body === '') return head.join('\n')
-  const indented = body.split('\n').map(line => (line.trim() === '' ? '' : `    ${line}`))
-  return [...head, '  config:', ...indented].join('\n')
+  const indented = body.split('\n').map(line => (line.trim() === '' ? '' : `        ${line}`))
+  return [...head, '      config:', ...indented].join('\n')
 }
 
 /**
