@@ -20,21 +20,22 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { CouncilCard } from './CouncilCard.tsx'
 import type { CouncilCardFace } from './CouncilCard.tsx'
 import { CouncilCardController } from './controller.ts'
+import { registerCouncilView } from './council-view.tsx'
 import { NS, en, zh } from './locales.ts'
 import type { CouncilKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** Council settings-card copy. */
+    /** Council settings-card and graph-view copy. */
     council: CouncilKey
   }
 }
 
-/** Required services for the card registration, its scope, and its copy. */
-export const inject = ['slots', 'locale', 'connection', 'settingsScope']
+/** Required services: card slot, graph view slot, session token reads, locale. */
+export const inject = ['slots', 'locale', 'connection', 'settingsScope', 'sessions']
 
 /**
- * Contribute the council card to the plugin-configuration tab.
+ * Contribute the council settings card and the council graph conversation view.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
@@ -54,4 +55,6 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     inject: face,
   }, CouncilCard))
+
+  registerCouncilView(ctx)
 }

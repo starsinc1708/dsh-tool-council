@@ -29,6 +29,15 @@ export const en = {
   'quorumRule.threshold': 'at least N confirmations',
   'status.loading': 'Loading council settings…',
   'status.unavailable': 'This deployment does not expose council settings.',
+  'view.council': 'Council',
+  'onlyMapReduce': 'The council graph is available in Map-Reduce mode.',
+  'noRuns': 'No council run yet. Send a task to start one.',
+  'tokens': '{n} tokens',
+  'status.running': 'running',
+  'status.completed': 'done',
+  'status.failed': 'failed',
+  'status.cancelled': 'cancelled',
+  'status.interrupted': 'interrupted',
 }
 
 /** Chinese copy; must cover exactly {@link en}'s key set. */
@@ -54,6 +63,15 @@ export const zh: typeof en = {
   'quorumRule.threshold': '至少 N 票确认',
   'status.loading': '正在加载议事会设置…',
   'status.unavailable': '此部署未开放议事会设置。',
+  'view.council': '议事会',
+  'onlyMapReduce': '议事会图仅在 Map-Reduce 模式下可用。',
+  'noRuns': '尚无议事会运行。发送任务即可开始。',
+  'tokens': '{n} tokens',
+  'status.running': '运行中',
+  'status.completed': '完成',
+  'status.failed': '失败',
+  'status.cancelled': '已取消',
+  'status.interrupted': '已中断',
 }
 
 /** Every key this namespace serves. */
