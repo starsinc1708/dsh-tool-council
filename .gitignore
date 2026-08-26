@@ -1,3 +1,6 @@
 node_modules/
-lib/
 *.tsbuildinfo
+
+# lib/ is deliberately COMMITTED: a `dsh plugin add github:...` install fetches
+# sources, not artifacts, and runs no build script. Shipping the built output is
+# what makes installation a single command with no pnpm allowBuilds allowance.

@@ -184,7 +184,8 @@ interface MemberProps {
   readonly t: (key: CouncilKey, args?: Record<string, unknown>) => string
 }
 
-function Member({ label, status, usage, t }: MemberProps) {
+function Member({ label, status, childId, useMemberUsage, t }: MemberProps) {
+  const usage = useMemberUsage(childId)
   const explanation = ROLE_GLOSSARY[label]
   const total = usage === undefined ? undefined
     : usage.uncachedInputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens

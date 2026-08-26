@@ -6,25 +6,97 @@ The plugin is a Consumer over the workflow and subagent seams. Its script is dep
 
 ## Install
 
-This package is a **bundle**: its `cordis.patch.yml` mounts one always-composed host row, and its `dsh.client` field carries the browser settings card. Add it to a profile:
+One command, into the profile `dsh web` boots:
 
-```jsonc
-// profiles/<name>/package.json
-{
-  "dependencies": { "@deepseek-ai/dsh-tool-council": "^0.1.1-rc.2" },
-  "dsh": {
-    "profile": {
-      "bundles": [
-        "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-web-app",
-        "@deepseek-ai/dsh-tool-council"
-      ]
-    }
-  }
-}
+```sh
+dsh plugin --profile web add github:starsinc1708/dsh-tool-council
 ```
 
-On load the host row derives a **Map-Reduce mode** agent preset from the `standard` roster entry, so the mode menu lists it beside Standard/Minimal/… without a restart. Selecting it composes the council tool (`dsh-tool-council/tool`) onto the standard agent plane.
+Then start the harness and pick the mode:
+
+```sh
+dsh web
+```
+
+**Map-Reduce mode** appears in the composer's mode menu beside Standard, PTC,
+Minimal and Creator. Selecting it composes the council onto the standard agent
+plane; every other mode is left exactly as it was.
+
+No build step and no pnpm `allowBuilds` allowance is needed: this repository
+commits its `lib/` output, so the install resolves to prebuilt artifacts. Pin a
+commit if you would rather a later push could not change what you run:
+
+```sh
+dsh plugin --profile web add github:starsinc1708/dsh-tool-council#<sha>
+```
+
+### Requirements
+
+- DeepSeek Harness `0.1.1-rc.2` (`dsh --version`), with `pnpm` on `PATH`.
+- The `web` profile, which composes `@deepseek-ai/dsh-base` and
+  `@deepseek-ai/dsh-web-app`. Everything the council needs — the workflow
+  engine, the subagent registry with the `spawn` provider, the settings
+  provider, and the `workflow-run` conversation node — is already in those two
+  bundles. Nothing else to install.
+
+### Verify it landed
+
+```sh
+dsh --profile web --dump-config | grep -A3 dsh-tool-council
+```
+
+A `# == @deepseek-ai/dsh-tool-council` layer with a `tool-council-host` row
+means the bundle composed. After the first `dsh web` start, the published preset
+is on disk:
+
+```sh
+ls "$DSH_HOME/.agent-presets/map-reduce"     # agent.cordis.yml  preset.yml
+```
+
+`$DSH_HOME` defaults to `~/.dsh`. Publication happens at plugin load, a second
+or two into boot, and preset discovery is unmemoized — the mode shows up without
+a restart.
+
+### Other install sources
+
+```sh
+dsh plugin --profile web add ./dsh-tool-council      # a local checkout
+dsh plugin --profile web add ./dsh-tool-council-0.1.1-rc.2.tgz   # pnpm pack output
+```
+
+Both skip the git fetch and need no build allowance either. Use a local checkout
+while developing: `pnpm build` then restart `dsh web`.
+
+### Update and remove
+
+```sh
+dsh plugin --profile web update @deepseek-ai/dsh-tool-council
+dsh plugin --profile web remove @deepseek-ai/dsh-tool-council
+```
+
+`remove` drops the dependency and the bundle layer, so the tool and the settings
+card disappear on the next start. It does **not** delete the published preset —
+`$DSH_HOME/.agent-presets/map-reduce` is yours once written, and the roster would
+list it as broken with the plugin gone. Delete that directory too:
+
+```sh
+rm -rf "$DSH_HOME/.agent-presets/map-reduce"
+```
+
+### What installing this does to your machine
+
+Two things worth stating plainly, because both are outside the agent sandbox:
+
+1. **It writes one directory into `$DSH_HOME/.agent-presets`.** A preset is a
+   composition, so the harness treats authoring one as carrying the same trust as
+   shell access. The directory is regenerated whenever the source `standard`
+   preset or this plugin's rows change, and hand edits to it are lost — copy it
+   under a new id to diverge, and set `installPreset: false` to stop the plugin
+   writing at all.
+2. **A run starts fresh subagents that can read and run commands in your
+   workspace.** That is the point — a verifier re-reads the file it is voting on
+   — but it means a council run costs real tokens and real tool calls: a
+   `bug-hunt` is eight children.
 
 ## Config
 
@@ -82,6 +154,41 @@ Nothing directly. Each member receives the preset's framing, its own role prompt
 ### Parent tool result
 
 A one-line count of members and confirmations, the Markdown verdict table, and the synthesizer's report, bounded by `maxReportChars`. Individual member transcripts and per-verifier reasons stay out of the parent context. Wording attributes conclusions to the members — "two of three verifiers confirmed" — because verifiers are agents re-reading the same repository, not an independent oracle.
+
+## Development
+
+```sh
+pnpm install
+pnpm build        # tsc -> lib/types, tsdown -> lib/*.js (host halves + client bundle)
+pnpm test         # vitest: tally arithmetic, policy resolution, script body
+```
+
+`pnpm build` emits both halves. The host entries are ordinary ESM; the browser
+entry is not — `lib/client.js` must be the loader's lazy-CJS factory artifact
+(`window.__ModuleLoader__.load({ id, factory })`), which is what
+[`tsdown.config.ts`](tsdown.config.ts) reproduces. The harness's own
+`clientBundle` preset is not published, so an out-of-tree package owns that
+format itself. Two rules the config encodes:
+
+- The shared module table is small — `react`, `react/jsx-runtime`, `react-dom`,
+  `react-dom/client`, `@deepseek-ai/cordis`, `dsh-client-ui-slots`,
+  `dsh-client-ui-primitives`, plus the preloaded `dsh-client-runtime/client`.
+  Everything else must inline, or the factory throws on a `require` the table
+  cannot answer.
+- Cross-plugin **value** imports are forbidden. Collaborate through cordis
+  services and keep the rest type-only.
+
+The `@deepseek-ai/dsh-*` packages are `devDependencies` on purpose. At runtime
+they resolve to the harness installation through the profile's Node parent-walk,
+so declaring them as runtime dependencies would install a second, older copy into
+the profile and shadow the one the harness is actually running.
+
+To iterate against a live harness, install the checkout and rebuild in place:
+
+```sh
+dsh plugin --profile web add .
+pnpm build && dsh web
+```
 
 ## Known Limitations and Deferred Work
 
