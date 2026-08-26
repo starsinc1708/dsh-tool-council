@@ -129,7 +129,7 @@ describe('tally', () => {
     const result = tally(clustered, ballots, majority)
     expect(result.verifiers).toEqual(['V1', 'V2'])
     expect(result.rows[0]?.votes).toEqual(['confirmed', 'confirmed'])
-    expect(result.rows[1]?.votes).toEqual(['rejected', undefined])
+    expect(result.rows[1]?.votes).toEqual(['rejected', null])
     expect(result.rows[0]?.outcome).toBe('confirmed')
     expect(result.rows[1]?.outcome).toBe('rejected')
   })

@@ -123,9 +123,11 @@ export function applyQuorum(counts: Counts, ballots: number, quorum: QuorumConfi
 /**
  * Build the verdict table from the verify layer's ballots.
  *
- * A verifier that returned no verdict for a finding contributes `undefined` to
- * that row rather than a silent abstention, so a partially answered ballot is
- * visible in the report instead of being read as agreement.
+ * A verifier that returned no verdict for a finding contributes `null` to that
+ * row rather than a silent abstention, so a partially answered ballot is
+ * visible in the report instead of being read as agreement. (`null`, not
+ * `undefined`: the workflow engine's result materializer rejects `undefined`
+ * as non-JSON data.)
  * @param findings - the deduplicated findings, in report order.
  * @param ballots - one entry per surviving verifier instance, in layer order.
  * @param quorum - the verify layer's quorum policy.
@@ -140,7 +142,7 @@ export function tally(
     ballot.verdicts.map(verdict => [verdict.findingId, verdict.vote] as const),
   ))
   const rows: TallyRow[] = findings.map((finding) => {
-    const votes = byVerifier.map(map => map.get(finding.id))
+    const votes = byVerifier.map(map => map.get(finding.id) ?? null)
     const counts: Counts = { confirmed: 0, rejected: 0, notABug: 0, uncertain: 0 }
     for (const vote of votes) {
       if (vote === 'confirmed') counts.confirmed += 1
@@ -189,7 +191,7 @@ export function renderTable(findings: readonly ClusteredFinding[], result: Tally
       String(index + 1),
       finding.title,
       finding.location,
-      ...row.votes.map(vote => vote === undefined ? '·' : VOTE_MARK[vote]),
+      ...row.votes.map(vote => vote === null ? '·' : VOTE_MARK[vote]),
       OUTCOME_LABEL[row.outcome],
       finding.fix === '' ? '—' : finding.fix,
     ]

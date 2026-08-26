@@ -74,8 +74,8 @@ export type Outcome = 'confirmed' | 'rejected' | 'not-a-bug' | 'insufficient'
 /** One row of the report table. */
 export interface TallyRow {
   readonly findingId: string
-  /** Votes in verifier order; `undefined` where that verifier returned no verdict for this finding. */
-  readonly votes: readonly (Vote | undefined)[]
+  /** Votes in verifier order; `null` where that verifier returned no verdict for this finding. */
+  readonly votes: readonly (Vote | null)[]
   readonly counts: {
     readonly confirmed: number
     readonly rejected: number

@@ -110,7 +110,7 @@ function applyQuorum(counts, ballots, rule, threshold) {
 function tally(findings, ballots, rule, threshold) {
   const maps = ballots.map(b => new Map(b.verdicts.map(v => [v.findingId, v.vote])))
   const rows = findings.map((finding) => {
-    const votes = maps.map(m => m.get(finding.id))
+    const votes = maps.map(m => m.get(finding.id) ?? null)
     const counts = { confirmed: 0, rejected: 0, notABug: 0, uncertain: 0 }
     for (const vote of votes) {
       if (vote === 'confirmed') counts.confirmed += 1
