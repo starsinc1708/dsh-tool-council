@@ -5,6 +5,7 @@
 .runHead { display: flex; align-items: center; gap: 10px; }
 .runName { font-size: 13px; font-weight: 600; }
 .runStatus { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.6; }
+.runLog { margin: 0; font-size: 12px; opacity: 0.75; font-variant-numeric: tabular-nums; }
 
 .layers { display: flex; gap: 10px; align-items: stretch; overflow-x: auto; }
 .layer {

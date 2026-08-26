@@ -98,7 +98,9 @@ export function registerCouncilView(ctx: ClientContext): void {
 /** One workflow-run node, extracted for rendering. */
 interface CouncilRun {
   readonly key: string
+  readonly id: string
   readonly data: RunData
+  latestLog: string | null
 }
 
 /** Render the Council graph tab. */
@@ -113,10 +115,17 @@ function CouncilView(
     return <div className={css.empty}>{t('onlyMapReduce')}</div>
   }
 
+  const logs = new Map<string, string>()
   const runs: CouncilRun[] = []
   for (const node of chat.nodes.values()) {
-    if (node.kind === 'workflow-run') runs.push({ key: node.key, data: node.data as unknown as RunData })
+    if (node.kind === 'workflow-run') {
+      runs.push({ key: node.key, id: node.id, data: node.data as unknown as RunData, latestLog: null })
+    } else if (node.kind === 'council-log') {
+      const data = node.data as unknown as { messages: readonly string[] }
+      logs.set(node.id, data.messages[data.messages.length - 1] ?? '')
+    }
   }
+  for (const run of runs) run.latestLog = logs.get(run.id) ?? null
   if (runs.length === 0) return <div className={css.empty}>{t('noRuns')}</div>
 
   return (
@@ -127,6 +136,7 @@ function CouncilView(
             <span className={css.runName}>{run.data.name}</span>
             <span className={css.runStatus}>{t(`status.${run.data.status}` as CouncilKey)}</span>
           </header>
+          {run.latestLog === null ? null : <p className={css.runLog}>{run.latestLog}</p>}
           <div className={css.layers}>
             {run.data.phases.map(phase => (
               <fieldset key={phase.key} className={css.layer}>

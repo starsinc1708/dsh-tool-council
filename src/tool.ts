@@ -24,6 +24,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 
 import { expandLayers, resolveConfig } from './policy.ts'
 import type { Config, ResolvedConfig } from './policy.ts'
+import { createCouncilRecorder } from './recorder.ts'
 import { COUNCIL_NAMESPACE, applyOverrides } from './settings.ts'
 import type { CouncilSettings } from './settings.ts'
 import { COUNCIL_SCRIPT } from './script.ts'
@@ -197,6 +198,7 @@ function presentResult(args: CouncilArgs, result: { content: ContentBlock[]; isE
  */
 export function apply(ctx: Context, config: Config): void {
   const composed = resolveConfig(config)
+  const recorder = createCouncilRecorder(ctx)
 
   // The deployment policy (`config`) fixes the topology and the tool's surface
   // at registration. The user plane — default preset, per-role widths and
@@ -300,12 +302,14 @@ export function apply(ctx: Context, config: Config): void {
         parent,
         signal: exec.signal,
       })
+      recorder.start(parent.session, run)
       const onAbort = (): void => { run.cancel('parent step aborted') }
       exec.signal.addEventListener('abort', onAbort, { once: true })
       if (exec.signal.aborted) run.cancel('parent step aborted')
 
+      let settled: Awaited<WorkflowRun['result']> | undefined
       try {
-        const settled = await run.result
+        settled = await run.result
         const error = stopReasonError(settled)
         if (error !== undefined) throw new Error(error)
         const outcome = readOutcome(settled.value)
@@ -325,7 +329,12 @@ export function apply(ctx: Context, config: Config): void {
         }
       } finally {
         exec.signal.removeEventListener('abort', onAbort)
-        await run.dispose()
+        try {
+          await run.dispose()
+          if (settled !== undefined) recorder.finish(run.id, settled.stopReason)
+        } finally {
+          recorder.abandon(run.id)
+        }
       }
     },
     presentCall,

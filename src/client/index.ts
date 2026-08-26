@@ -20,6 +20,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { CouncilCard } from './CouncilCard.tsx'
 import type { CouncilCardFace } from './CouncilCard.tsx'
 import { CouncilCardController } from './controller.ts'
+import { councilLogDefinition } from './council-log-definition.ts'
 import { registerCouncilView } from './council-view.tsx'
 import { NS, en, zh } from './locales.ts'
 import type { CouncilKey } from './locales.ts'
@@ -31,8 +32,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Required services: card slot, graph view slot, session token reads, locale. */
-export const inject = ['slots', 'locale', 'connection', 'settingsScope', 'sessions']
+/** Required services: card slot, graph view slot, log node, session token reads, locale. */
+export const inject = ['slots', 'locale', 'connection', 'settingsScope', 'sessions', 'conversationEvents']
 
 /**
  * Contribute the council settings card and the council graph conversation view.
@@ -40,6 +41,7 @@ export const inject = ['slots', 'locale', 'connection', 'settingsScope', 'sessio
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-council: dictionaries')
+  ctx.effect(() => ctx.conversationEvents.register(councilLogDefinition), 'ui-council: council-log definition')
 
   const controller = new CouncilCardController(
     ctx.settingsScope.bind<CouncilSettings>({ namespace: 'council' }),
