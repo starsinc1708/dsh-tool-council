@@ -67,7 +67,9 @@ export function dedupeFindings(reported: readonly ReportedFinding[]): ClusteredF
     variants: string[]
   }>()
   for (const { by, finding } of reported) {
-    const key = `${normalizeLocation(finding.location)}|${fingerprint(finding.title)}`
+    const fp = fingerprint(finding.title)
+    const titleKey = fp === '' ? finding.title.toLowerCase().trim() : fp
+    const key = `${normalizeLocation(finding.location)}|${titleKey}`
     const existing = clusters.get(key)
     if (existing === undefined) {
       clusters.set(key, { finding, reportedBy: [by], variants: [finding.title] })
@@ -117,6 +119,10 @@ export function applyQuorum(counts: Counts, ballots: number, quorum: QuorumConfi
     }
   })()
   if (confirmed) return 'confirmed'
+  // All-uncertain (or all-abstained) is not a negative verdict: with no
+  // rejected and no not-a-bug, "could not verify" must not be reported as
+  // "the claim is false".
+  if (counts.rejected === 0 && counts.notABug === 0) return 'insufficient'
   return counts.notABug > counts.rejected ? 'not-a-bug' : 'rejected'
 }
 
@@ -189,14 +195,19 @@ export function renderTable(findings: readonly ClusteredFinding[], result: Tally
     if (row === undefined) throw new Error(`council: no tally row for finding ${finding.id}`)
     return [
       String(index + 1),
-      finding.title,
-      finding.location,
+      cell(finding.title),
+      cell(finding.location),
       ...row.votes.map(vote => vote === null ? '·' : VOTE_MARK[vote]),
       OUTCOME_LABEL[row.outcome],
-      finding.fix === '' ? '—' : finding.fix,
+      finding.fix === '' ? '—' : cell(finding.fix),
     ]
   })
   return [header, divider, ...body].map(cells => `| ${cells.join(' | ')} |`).join('\n')
+}
+
+/** Escape a user-provided table cell so `|` and newlines cannot break the Markdown table. */
+function cell(value: string): string {
+  return value.replace(/\\/gu, '\\\\').replace(/\|/gu, '\\|').replace(/\r?\n/gu, ' ')
 }
 
 /**

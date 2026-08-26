@@ -119,6 +119,17 @@ export function resolveConfig(config: Config): ResolvedConfig {
     /* v8 ignore next -- length was checked above; the index cannot be empty. */
     if (last === undefined) throw new TypeError(`${where}: has no layers`)
     if (last.kind !== 'reduce') throw new TypeError(`${where}: the last layer must be a reduce layer`)
+    // The reduce branch in the script returns unconditionally, so any layer
+    // after a reduce is silently dropped; and the script tallies ballots with
+    // the LAST verify layer's quorum while the host recomputes with the first,
+    // so a second verify layer would split the two copies.
+    if (preset.layers.slice(0, -1).some(layer => layer.kind === 'reduce')) {
+      throw new TypeError(`${where}: only the last layer may be a reduce layer`)
+    }
+    const verifyCount = preset.layers.filter(layer => layer.kind === 'verify').length
+    if (verifyCount > 1) {
+      throw new TypeError(`${where}: at most one verify layer is supported (${verifyCount} declared)`)
+    }
     validateLayers(preset, maxAgentsPerLayer, where)
   }
   const defaultId = config.defaultPreset ?? 'bug-hunt'
@@ -174,9 +185,9 @@ function validateLayers(preset: PresetConfig, maxAgentsPerLayer: number, where: 
     }
     if (layer.kind === 'verify' && layer.quorum?.rule === 'threshold') {
       const threshold = layer.quorum.threshold
-      if (threshold === undefined || threshold > width) {
+      if (threshold === undefined || threshold < 1 || threshold > width) {
         throw new TypeError(
-          `${where}: verify layer "${layer.id}" needs a threshold of at most its width ${width}`,
+          `${where}: verify layer "${layer.id}" needs a threshold between 1 and its width ${width}`,
         )
       }
     }
@@ -214,7 +225,10 @@ export function expandLayers(preset: PresetConfig): ScriptLayer[] {
       id: layer.id,
       kind: layer.kind,
       quorumRule: layer.quorum?.rule ?? 'majority',
-      quorumThreshold: layer.quorum?.threshold ?? instances.length,
+      // No default here: the host's `applyQuorum` defaults a missing threshold
+      // to the live ballot count, so the script must do the same (`?? ballots`),
+      // not `instances.length` — otherwise a failed verifier splits the copies.
+      quorumThreshold: layer.quorum?.threshold,
       instances,
     }
   })

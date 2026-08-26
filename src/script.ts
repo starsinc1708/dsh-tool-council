@@ -28,7 +28,7 @@ export interface ScriptLayer {
   readonly id: string
   readonly kind: 'map' | 'verify' | 'reduce'
   readonly quorumRule: 'majority' | 'unanimous' | 'threshold'
-  readonly quorumThreshold: number
+  readonly quorumThreshold?: number
   readonly instances: readonly ScriptInstance[]
 }
 
@@ -60,21 +60,23 @@ function normalizeLocation(location) {
 }
 
 function normalizedText(value) {
-  return typeof value === 'string' && value.length > 0 && value === value.trim()
+  return typeof value === 'string' && value.trim().length > 0
 }
 
 const SEVERITIES = ['blocker', 'high', 'medium', 'low']
 
 function readFinding(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
-  if (!normalizedText(raw.title) || !normalizedText(raw.location)) return null
-  if (!normalizedText(raw.claim) || !normalizedText(raw.evidence)) return null
+  const title = typeof raw.title === 'string' ? raw.title.trim() : ''
+  const location = typeof raw.location === 'string' ? raw.location.trim() : ''
+  const claim = typeof raw.claim === 'string' ? raw.claim.trim() : ''
+  const evidence = typeof raw.evidence === 'string' ? raw.evidence.trim() : ''
+  const fix = typeof raw.fix === 'string' ? raw.fix.trim() : ''
+  if (title.length === 0 || location.length === 0 || claim.length === 0 || evidence.length === 0) return null
   if (!SEVERITIES.includes(raw.severity)) return null
   if (typeof raw.confidence !== 'number' || !(raw.confidence >= 0) || !(raw.confidence <= 1)) return null
-  if (typeof raw.fix !== 'string' || raw.fix !== raw.fix.trim()) return null
   const finding = {
-    title: raw.title, location: raw.location, claim: raw.claim,
-    evidence: raw.evidence, severity: raw.severity, confidence: raw.confidence, fix: raw.fix,
+    title, location, claim, evidence, severity: raw.severity, confidence: raw.confidence, fix,
   }
   return JSON.stringify(finding).length > args.maxFindingChars ? null : finding
 }
@@ -82,7 +84,9 @@ function readFinding(raw) {
 function dedupeFindings(reported) {
   const clusters = new Map()
   for (const entry of reported) {
-    const key = normalizeLocation(entry.finding.location) + '|' + fingerprint(entry.finding.title)
+    const fp = fingerprint(entry.finding.title)
+    const titleKey = fp === '' ? entry.finding.title.toLowerCase().trim() : fp
+    const key = normalizeLocation(entry.finding.location) + '|' + titleKey
     const existing = clusters.get(key)
     if (existing === undefined) {
       clusters.set(key, { finding: entry.finding, reportedBy: [entry.by], variants: [entry.finding.title] })
@@ -102,8 +106,9 @@ function applyQuorum(counts, ballots, rule, threshold) {
   let confirmed
   if (rule === 'majority') confirmed = counts.confirmed > counts.rejected + counts.notABug
   else if (rule === 'unanimous') confirmed = counts.confirmed === ballots
-  else confirmed = counts.confirmed >= threshold
+  else confirmed = counts.confirmed >= (threshold ?? ballots)
   if (confirmed) return 'confirmed'
+  if (counts.rejected === 0 && counts.notABug === 0) return 'insufficient'
   return counts.notABug > counts.rejected ? 'not-a-bug' : 'rejected'
 }
 
@@ -196,7 +201,7 @@ let findings = []
 let clustered = []
 let ballots = []
 let table = null
-let mapDigest = []
+let reportingMembers = new Set()
 
 for (const layer of args.layers) {
   phase(layer.id)
@@ -221,14 +226,17 @@ for (const layer of args.layers) {
       for (const candidate of list) {
         const finding = readFinding(candidate)
         if (finding === null) continue
-        if (findings.length >= args.maxFindings) break
         findings.push({ by: output.instanceId, finding })
+        reportingMembers.add(output.instanceId)
       }
-      mapDigest.push({ by: output.instanceId, count: list.length })
     }
-    clustered = dedupeFindings(findings)
+    if (args.reduceMode === 'vote') {
+      clustered = dedupeFindings(findings)
+      if (clustered.length > args.maxFindings) clustered = clustered.slice(0, args.maxFindings)
+    }
     log('map layer "' + layer.id + '": ' + findings.length + ' findings from '
-      + mapDigest.length + ' members, ' + clustered.length + ' after deduplication')
+      + reportingMembers.size + ' members'
+      + (args.reduceMode === 'vote' ? ', ' + clustered.length + ' after deduplication' : ''))
     continue
   }
 
@@ -273,7 +281,7 @@ for (const layer of args.layers) {
   const body = args.reduceMode === 'vote' && table !== null
     ? 'VERDICT TABLE (votes in verifier order ' + JSON.stringify(table.verifiers) + '):\n'
       + JSON.stringify({ findings: clustered, ballots: ballots, tally: table }, null, 2)
-    : 'MEMBER REPORTS:\n' + JSON.stringify({ findings: clustered.length > 0 ? clustered : findings }, null, 2)
+    : 'MEMBER REPORTS:\n' + JSON.stringify({ findings }, null, 2)
   const options = { label: instance.label, phase: layer.id }
   if (instance.model !== undefined) options.model = instance.model
   if (instance.provider !== undefined) options.provider = instance.provider
@@ -283,7 +291,7 @@ for (const layer of args.layers) {
     ballots: ballots,
     tally: table,
     report: typeof report === 'string' ? report : '',
-    membersReporting: mapDigest.length,
+    membersReporting: reportingMembers.size,
   }
 }
 
@@ -292,6 +300,6 @@ return {
   ballots: ballots,
   tally: table,
   report: '',
-  membersReporting: mapDigest.length,
+  membersReporting: reportingMembers.size,
 }
 `

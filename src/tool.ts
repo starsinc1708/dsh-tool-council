@@ -151,16 +151,19 @@ function bound(text: string, maxChars: number): string {
  */
 export function renderOutcome(outcome: CouncilOutcome, maxChars: number): string {
   const parts: string[] = []
-  if (outcome.tally !== null && outcome.findings.length > 0) {
-    const confirmed = outcome.tally.rows.filter(row => row.outcome === 'confirmed').length
-    parts.push(
-      `${outcome.membersReporting} council members reported ${outcome.findings.length} distinct findings; `
-      + `${outcome.ballots.length} verifiers voted, confirming ${confirmed}.`,
-      renderTable(outcome.findings, outcome.tally),
-    )
-  } else if (outcome.findings.length === 0) {
-    parts.push(`${outcome.membersReporting} council members reported no findings.`)
+  if (outcome.tally !== null) {
+    if (outcome.findings.length > 0) {
+      const confirmed = outcome.tally.rows.filter(row => row.outcome === 'confirmed').length
+      parts.push(
+        `${outcome.membersReporting} council members reported ${outcome.findings.length} distinct findings; `
+        + `${outcome.ballots.length} verifiers voted, confirming ${confirmed}.`,
+        renderTable(outcome.findings, outcome.tally),
+      )
+    } else {
+      parts.push(`${outcome.membersReporting} council members reported no findings.`)
+    }
   }
+  // A null tally is the synthesis path: no table, just the written report.
   if (outcome.report !== '') parts.push(outcome.report)
   return bound(parts.join('\n\n'), maxChars)
 }

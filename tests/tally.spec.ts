@@ -70,6 +70,14 @@ describe('dedupeFindings', () => {
     expect(clustered[0]?.reportedBy).toEqual(['correctness'])
     expect(clustered[0]?.variants).toEqual(['Greedy scoring inverted'])
   })
+
+  it('does not merge all-stop-word titles at the same location', () => {
+    const clustered = dedupeFindings([
+      { by: 'a', finding: finding({ title: 'The is', claim: 'first claim' }) },
+      { by: 'b', finding: finding({ title: 'In on', claim: 'second claim' }) },
+    ])
+    expect(clustered.map(entry => entry.id)).toEqual(['f1', 'f2'])
+  })
 })
 
 describe('applyQuorum', () => {
@@ -94,15 +102,20 @@ describe('applyQuorum', () => {
     expect(applyQuorum(counts(0, 1, 1, 0), 2, majority)).toBe('rejected')
   })
 
-  it('requires every ballot under unanimity, and uncertainty denies it', () => {
+  it('requires every ballot under unanimity, and uncertainty leaves it insufficient', () => {
     const unanimous: QuorumConfig = { rule: 'unanimous' }
     expect(applyQuorum(counts(3, 0, 0, 0), 3, unanimous)).toBe('confirmed')
-    expect(applyQuorum(counts(2, 0, 0, 1), 3, unanimous)).toBe('rejected')
+    expect(applyQuorum(counts(2, 0, 0, 1), 3, unanimous)).toBe('insufficient')
   })
 
   it('honours an explicit threshold, defaulting to every ballot', () => {
     expect(applyQuorum(counts(2, 1, 0, 0), 3, { rule: 'threshold', threshold: 2 })).toBe('confirmed')
     expect(applyQuorum(counts(2, 1, 0, 0), 3, { rule: 'threshold' })).toBe('rejected')
+  })
+
+  it('treats an all-uncertain verdict as insufficient, not rejected', () => {
+    expect(applyQuorum(counts(0, 0, 0, 2), 2, majority)).toBe('insufficient')
+    expect(applyQuorum(counts(0, 0, 0, 3), 3, majority)).toBe('insufficient')
   })
 })
 
@@ -150,6 +163,15 @@ describe('tally', () => {
     expect(lines[2]).toContain('CONFIRMED')
     expect(lines[3]).toContain('| · |')
     expect(lines[3]).toContain('| — |')
+  })
+
+  it('escapes pipes and newlines in user-provided cells', () => {
+    const hostile = finding({ title: 'a|b', location: 'src/x.py:1', fix: 'c|d\ne' })
+    const list = dedupeFindings([{ by: 'm', finding: hostile }])
+    const table = renderTable(list, tally(list, [], majority))
+    expect(table).toContain('a\\|b')
+    expect(table).toContain('c\\|d e')
+    expect(table.split('\n')).toHaveLength(3)
   })
 
   it('accepts an identical script tally and refuses a divergent one', () => {
