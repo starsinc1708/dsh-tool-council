@@ -23,7 +23,7 @@
 # role's model/provider.
 - insert:
     - id: tool-council-host
-      name: '@deepseek-ai/dsh-tool-council'
+      name: '@starsinc1708/dsh-tool-council'
       config:
         installPreset: true
         presetId: map-reduce

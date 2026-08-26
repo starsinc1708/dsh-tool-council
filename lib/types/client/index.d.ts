@@ -4,7 +4,7 @@
  * The card joins the "Plugin configuration" tab through the keyed
  * `settings.plugin.item` slot: that tab dispatches one slot key per settings
  * namespace the Host serves, so a deployment that does not mount
- * `@deepseek-ai/dsh-tool-council` renders nothing here and no repository file
+ * `@starsinc1708/dsh-tool-council` renders nothing here and no repository file
  * needs editing to add the card.
  *
  * @module @deepseek-ai/dsh-client-ui-council

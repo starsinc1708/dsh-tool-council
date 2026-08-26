@@ -1,5 +1,5 @@
 /**
- * Build config for @deepseek-ai/dsh-tool-council.
+ * Build config for @starsinc1708/dsh-tool-council.
  *
  * Two passes:
  *   1. host — four ESM entries (`index`, `tool`, `types`, `invariant`) bundled
@@ -22,7 +22,7 @@ import { basename, dirname, resolve } from 'node:path'
 import type { Plugin } from 'rolldown'
 import type { UserConfig } from 'tsdown'
 
-const PACKAGE_NAME = '@deepseek-ai/dsh-tool-council'
+const PACKAGE_NAME = '@starsinc1708/dsh-tool-council'
 
 const EXTERNAL_DEPS = { neverBundle: true } as const
 

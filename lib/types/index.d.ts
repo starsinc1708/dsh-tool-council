@@ -21,7 +21,7 @@
  * reach it in every mode, and the tool row (agent plane, mounted by the
  * published preset) reads it at call time.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';

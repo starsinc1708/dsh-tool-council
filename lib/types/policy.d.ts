@@ -4,7 +4,7 @@
  * always-composed host row can validate the same policy it publishes and mirrors
  * without dragging in the tool's `ctx.tools`/workflow dependencies.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 import z from '@deepseek-ai/schemastery';
 import type { ScriptLayer } from './script.ts';

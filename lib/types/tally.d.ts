@@ -9,7 +9,7 @@
  * structured handoff on both sides of the realm boundary; this copy is the one
  * the coverage gate exercises.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 import type { ClusteredFinding, Finding, Outcome, QuorumConfig, Tally, VerifierBallot } from './types.ts';
 /**

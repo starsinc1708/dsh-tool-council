@@ -7,7 +7,7 @@
  * composition can start from one and override a single field in `cordis.yml`
  * rather than restating a topology.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 import type { PresetConfig } from './types.ts';
 /** The four shipped topologies. */

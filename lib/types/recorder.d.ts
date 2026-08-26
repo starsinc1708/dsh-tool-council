@@ -8,7 +8,7 @@
  * model-facing `workflow` tool; the council starts its run directly through
  * `ctx.workflowEngine`, so it owns this recorder itself.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { SessionId } from '@deepseek-ai/dsh-session';

@@ -1,4 +1,4 @@
-# @deepseek-ai/dsh-tool-council
+# @starsinc1708/dsh-tool-council
 
 A map-reduce council of subagents for the DeepSeek Harness: one task fans out to several fresh children through different lenses, verifiers re-check each finding from the source, and a quorum turns their votes into a verdict table.
 
@@ -45,7 +45,7 @@ dsh plugin --profile web add github:starsinc1708/dsh-tool-council#<sha>
 dsh --profile web --dump-config | grep -A3 dsh-tool-council
 ```
 
-A `# == @deepseek-ai/dsh-tool-council` layer with a `tool-council-host` row
+A `# == @starsinc1708/dsh-tool-council` layer with a `tool-council-host` row
 means the bundle composed. After the first `dsh web` start, the published preset
 is on disk:
 
@@ -70,8 +70,8 @@ while developing: `pnpm build` then restart `dsh web`.
 ### Update and remove
 
 ```sh
-dsh plugin --profile web update @deepseek-ai/dsh-tool-council
-dsh plugin --profile web remove @deepseek-ai/dsh-tool-council
+dsh plugin --profile web update @starsinc1708/dsh-tool-council
+dsh plugin --profile web remove @starsinc1708/dsh-tool-council
 ```
 
 `remove` drops the dependency and the bundle layer, so the tool and the settings
@@ -104,7 +104,7 @@ Two things worth stating plainly, because both are outside the agent sandbox:
 # profiles/<name>/cordis.patch.yml (or the bundle's own cordis.patch.yml)
 - insert:
     - id: tool-council-host
-      name: '@deepseek-ai/dsh-tool-council'
+      name: '@starsinc1708/dsh-tool-council'
       config:
         installPreset: true
         presetId: map-reduce

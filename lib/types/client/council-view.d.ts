@@ -11,8 +11,8 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client';
 /** Everything the view's slot registration injects. */
 export interface CouncilViewInjected {
-    /** Read one member's cumulative token usage from its child session. */
-    readMemberUsage: (childId: string) => TokenUsageProjection | undefined;
+    /** Reactively read one member's cumulative token usage from its child session. */
+    useMemberUsage: (childId: string) => TokenUsageProjection | undefined;
 }
 /** Register the Council conversation-view tab. */
 export declare function registerCouncilView(ctx: ClientContext): void;

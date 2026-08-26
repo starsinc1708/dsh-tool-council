@@ -4,7 +4,7 @@
  * module imports no Agent, no cordis Context, and no host-only type, so the
  * settings card can reuse it.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 /** How serious the author claims the finding is. */
 export type FindingSeverity = 'blocker' | 'high' | 'medium' | 'low';

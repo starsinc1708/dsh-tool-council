@@ -10,7 +10,7 @@
  * authoritative copy and the one under test; the host recomputes and refuses a
  * run whose script tally disagrees.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 /** One role instance the host expanded from `RoleConfig.count`. */
 export interface ScriptInstance {

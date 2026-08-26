@@ -21,7 +21,7 @@
  * reach it in every mode, and the tool row (agent plane, mounted by the
  * published preset) reads it at call time.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -110,7 +110,7 @@ export const Config: z<Config> = z.object({
     + 'deduplicated, verified by a separate panel, and reduced to a quorum report.',
   ),
   presetOrder: z.number().step(1).min(0).max(1000).default(10),
-  presetPluginName: z.string().default('@deepseek-ai/dsh-tool-council/tool'),
+  presetPluginName: z.string().default('@starsinc1708/dsh-tool-council/tool'),
   // Validated structurally by resolveConfig below, not by schemastery: the
   // tool's schema cannot express "one trailing reduce layer", "a quorum exactly
   // on a verify layer", or unique ids. Raw passthrough keeps the published
@@ -211,7 +211,7 @@ export function apply(ctx: Context, config: Config): void {
     description: config.presetDescription ?? '',
     order: config.presetOrder ?? 10,
     rows: composeRows(
-      config.presetPluginName ?? '@deepseek-ai/dsh-tool-council/tool',
+      config.presetPluginName ?? '@starsinc1708/dsh-tool-council/tool',
       toolConfigOf(config.councilPolicy),
     ),
   }

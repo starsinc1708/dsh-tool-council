@@ -11,7 +11,7 @@
  * @module @deepseek-ai/dsh-client-ui-council
  */
 import type { HostObservable, InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
-import type { QuorumRule } from '@deepseek-ai/dsh-tool-council/types';
+import type { QuorumRule } from '@starsinc1708/dsh-tool-council/types';
 import type { CouncilCardState } from './controller.ts';
 /** Everything the slot's `inject` factory hands the card. */
 export interface CouncilCardFace {

@@ -4,14 +4,14 @@
  * The card joins the "Plugin configuration" tab through the keyed
  * `settings.plugin.item` slot: that tab dispatches one slot key per settings
  * namespace the Host serves, so a deployment that does not mount
- * `@deepseek-ai/dsh-tool-council` renders nothing here and no repository file
+ * `@starsinc1708/dsh-tool-council` renders nothing here and no repository file
  * needs editing to add the card.
  *
  * @module @deepseek-ai/dsh-client-ui-council
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { CouncilSettings } from '@deepseek-ai/dsh-tool-council/types'
+import type { CouncilSettings } from '@starsinc1708/dsh-tool-council/types'
 // Type-only: the keyed slot's declaration and the `locale` service's Context
 // augmentation. A value import across client plugins fails the purity gate.
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'

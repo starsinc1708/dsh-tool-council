@@ -10,7 +10,7 @@
  *
  * Browser-safe: no cordis Context, no Agent, no host-only import.
  *
- * @module @deepseek-ai/dsh-tool-council/types
+ * @module @starsinc1708/dsh-tool-council/types
  */
 
 import type { LayerKind, PresetConfig, QuorumRule } from './types.ts'

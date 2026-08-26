@@ -10,7 +10,7 @@
  * @module @deepseek-ai/dsh-client-ui-council
  */
 import type { SettingsScope } from '@deepseek-ai/dsh-client-runtime/client';
-import type { CouncilSettings, PresetOverride, QuorumRule, TopologyPreset } from '@deepseek-ai/dsh-tool-council/types';
+import type { CouncilSettings, PresetOverride, QuorumRule, TopologyPreset } from '@starsinc1708/dsh-tool-council/types';
 /** What the card renders. */
 export interface CouncilCardState {
     readonly status: 'loading' | 'ready' | 'unavailable';

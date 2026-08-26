@@ -117,7 +117,7 @@ export const inject = ['tools', 'workflowEngine', 'subagents', 'systemPrompt']
 
 ```yaml
 - id: tool-council
-  name: '@deepseek-ai/dsh-tool-council'
+  name: '@starsinc1708/dsh-tool-council'
   config:
     subagentProvider: spawn
     toolName: council

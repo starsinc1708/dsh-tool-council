@@ -9,7 +9,7 @@
  * task text. Concurrency limiting, cancellation, worker termination, and the
  * `workflow-run` conversation node all come from the workflow engine.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { Config } from './policy.ts';

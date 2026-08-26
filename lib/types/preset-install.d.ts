@@ -21,7 +21,7 @@
  * keeps the plugin loadable against either, and the two members used are the ones
  * the service README documents.
  *
- * @module @deepseek-ai/dsh-tool-council
+ * @module @starsinc1708/dsh-tool-council
  */
 /** One roster root, as `ctx.agentPresets.roots` reports it. */
 export interface PresetRootLike {

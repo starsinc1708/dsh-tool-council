@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-tool-council",
+  "name": "@starsinc1708/dsh-tool-council",
   "description": "Map-reduce council of subagents for the DeepSeek Harness: one task fans out to independent members, their findings are deduplicated, verified by a separate panel, and reduced to a quorum report",
   "version": "0.1.1-rc.2",
   "publishConfig": {
