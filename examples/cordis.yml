@@ -1,0 +1,20 @@
+# One-off --patch overlay to try the council without adding it as a profile
+# bundle:
+#
+#   dsh web --patch examples/cordis.yml
+#
+# This reproduces what the bundle's own `cordis.patch.yml` contributes: the
+# always-composed host row that publishes the "Map-Reduce mode" preset, owns
+# the `council` settings namespace, and carries the browser settings card.
+#
+# The preferred installation is the bundle — add the package to the profile's
+# `dependencies` and `dsh.profile.bundles` (see README). This overlay is for a
+# quick run against an already-installed package.
+- insert:
+    - id: tool-council-host
+      name: '@deepseek-ai/dsh-tool-council'
+      config:
+        installPreset: true
+        presetId: map-reduce
+        presetName: 'Map-Reduce mode'
+        # councilPolicy omitted → the four shipped topologies and default ceilings.

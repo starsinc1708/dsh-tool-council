@@ -1,0 +1,226 @@
+/**
+ * The council's HOST-plane row, mounted under the package's BARE name.
+ *
+ * Why the installer, not the tool, owns the bare name. Two constraints meet
+ * here. The preset cannot install itself — a row living only inside the
+ * `map-reduce` composition never runs until someone selects a mode that does
+ * not exist yet — so the installer must sit on the host plane, which is
+ * composed unconditionally. And the client module system serves a package's
+ * browser bundle only for an entry whose name IS the package name: it resolves
+ * `<entry>/package.json`, which a subpath row like `dsh-tool-council/tool` can
+ * never satisfy. So the row that is always composed has to be the bare one, or
+ * the settings card is never served.
+ *
+ * That fixes the split: bare name → this host row (preset publication, settings
+ * ownership, browser bundle carrier); `./tool` subpath → the model-facing tool,
+ * mounted by the preset it publishes.
+ *
+ * This row registers no tool and no prompt section, so composing it costs the
+ * model nothing in any mode. It owns the `council` settings namespace: the
+ * section lives on the always-composed host plane, so the browser card can
+ * reach it in every mode, and the tool row (agent plane, mounted by the
+ * published preset) reads it at call time.
+ *
+ * @module @deepseek-ai/dsh-tool-council
+ */
+
+import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
+import { dump } from 'js-yaml'
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+
+import { ensurePreset } from './preset-install.ts'
+import type { AgentPresetsLike } from './preset-install.ts'
+import { COUNCIL_NAMESPACE, applyOverrides, toTopology } from './settings.ts'
+import type { CouncilSettings, PresetOverride, QuorumOverride, RoleOverride } from './settings.ts'
+import { resolveConfig } from './policy.ts'
+import type { Config as CouncilConfig } from './policy.ts'
+
+/** Cordis plugin name for the host row. */
+export const name = 'tool-council-host'
+
+/** Deployment policy for preset publication and settings ownership. */
+export interface Config {
+  /**
+   * Publish the preset. `false` leaves `$DSH_HOME` untouched — the council is
+   * then reachable only from a mode whose composition mounts the tool row by
+   * hand.
+   */
+  installPreset?: boolean
+  /** Roster id and directory name of the published preset. */
+  presetId?: string
+  /** Preset whose composition the published one is derived from. */
+  presetSource?: string
+  /** Display name in the mode menu; rendered verbatim, never translated. */
+  presetName?: string
+  /** Display description in the mode menu; rendered verbatim. */
+  presetDescription?: string
+  /** Sort order in the mode menu. */
+  presetOrder?: number
+  /**
+   * Module specifier the published preset mounts the council tool by. A subpath
+   * row deliberately: the bare name is this host row, already composed.
+   */
+  presetPluginName?: string
+  /**
+   * The council's deployment policy — the tool's own configuration. Owned here,
+   * on the always-composed row, so the settings card can mirror the deployment's
+   * real topology in every mode and the published preset can mount the tool
+   * with the same policy. Omitted → the tool's schema defaults (the four
+   * shipped topologies, `spawn`, `council`, default ceilings).
+   */
+  councilPolicy?: CouncilConfig
+}
+
+const RoleOverrideSchema: z<RoleOverride> = z.object({
+  count: z.number().step(1).min(1).max(64),
+  model: z.string(),
+  provider: z.string(),
+})
+
+const QuorumOverrideSchema: z<QuorumOverride> = z.object({
+  rule: z.union(['majority', 'unanimous', 'threshold'] as const),
+  threshold: z.number().step(1).min(1).max(64),
+})
+
+const PresetOverrideSchema: z<PresetOverride> = z.object({
+  roles: z.dict(RoleOverrideSchema).default({}),
+  quorums: z.dict(QuorumOverrideSchema).default({}),
+})
+
+/**
+ * User-plane schema for the `council` settings section. `topology` is written
+ * by the composition as the section's `base` layer and is never a user field;
+ * it exists so the settings card can render the deployment's real layers.
+ */
+export const CouncilSettingsSchema: z<CouncilSettings> = z.object({
+  defaultPreset: z.string(),
+  topology: z.array(z.any()).default([]),
+  overrides: z.dict(PresetOverrideSchema).default({}),
+}) as unknown as z<CouncilSettings>
+
+/** Schemastery configuration for the host row. */
+export const Config: z<Config> = z.object({
+  installPreset: z.boolean().default(true),
+  presetId: z.string().default('map-reduce'),
+  presetSource: z.string().default('standard'),
+  presetName: z.string().default('Map-Reduce mode'),
+  presetDescription: z.string().default(
+    'Standard mode plus the council: one task fans out to independent members, their findings are '
+    + 'deduplicated, verified by a separate panel, and reduced to a quorum report.',
+  ),
+  presetOrder: z.number().step(1).min(0).max(1000).default(10),
+  presetPluginName: z.string().default('@deepseek-ai/dsh-tool-council/tool'),
+  // Validated structurally by resolveConfig below, not by schemastery: the
+  // tool's schema cannot express "one trailing reduce layer", "a quorum exactly
+  // on a verify layer", or unique ids. Raw passthrough keeps the published
+  // preset's tool config minimal — the tool re-applies its own defaults.
+  councilPolicy: z.any(),
+})
+
+/**
+ * Render the rows appended to the source composition.
+ *
+ * The council tool is not a cordis service — it registers into `ctx.tools` and
+ * `ctx.systemPrompt` — so it needs no `isolate` realm group, which the agent
+ * plane requires of service rows only.
+ * @param pluginName - module specifier to mount.
+ * @param toolConfig - YAML mapping lines for the row's `config`, or empty.
+ * @returns the YAML list entries to append.
+ */
+export function composeRows(pluginName: string, toolConfig: string): string {
+  const head = [
+    '# The council itself. Present on this plane and no other, which is what',
+    '# distinguishes this mode from the preset it was derived from.',
+    '- id: tool-council',
+    `  name: ${JSON.stringify(pluginName)}`,
+  ]
+  const body = toolConfig.trim()
+  if (body === '') return head.join('\n')
+  const indented = body.split('\n').map(line => (line.trim() === '' ? '' : `    ${line}`))
+  return [...head, '  config:', ...indented].join('\n')
+}
+
+/**
+ * Serialize the raw `councilPolicy` back to YAML for the published preset's
+ * tool row. Omitted policy → empty (the tool's schema defaults apply).
+ * @param policy - the raw user-declared policy, or undefined.
+ * @returns YAML mapping lines, or an empty string.
+ */
+function toolConfigOf(policy: unknown): string {
+  if (policy === undefined || policy === null) return ''
+  if (typeof policy === 'object' && !Array.isArray(policy) && Object.keys(policy as object).length === 0) return ''
+  return dump(policy, { noRefs: true, lineWidth: -1 }).trimEnd()
+}
+
+/**
+ * Register the host row: own the `council` settings namespace and publish the
+ * Map-Reduce preset.
+ * @param ctx - the plugin context; the roster and settings are read optionally.
+ * @param config - the loader-normalized configuration.
+ */
+export function apply(ctx: Context, config: Config): void {
+  // Validate the policy at load, not at call: a topology that violates the
+  // structural rules must break the deployment.
+  const policy = resolveConfig(config.councilPolicy ?? {})
+
+  // The user plane may widen or narrow a role and re-route its model; it may
+  // not change the topology. It lives in the `council` namespace, which this
+  // always-composed row owns, so the card can reach it in every mode.
+  installSettingsSection(ctx, settingsNamespace(COUNCIL_NAMESPACE), CouncilSettingsSchema, {
+    defaultPreset: policy.defaultPreset.id,
+    topology: toTopology(policy.presets),
+    overrides: {},
+  }, {
+    // This row OWNS the section but does not consume it — the tool row reads
+    // it at call time — so the source/onChange wiring is a no-op here.
+    setSource: () => {},
+    onChange: () => {},
+    // Refuse the write, not the next call: an overlay that pushes a layer past
+    // maxAgentsPerLayer must fail in the settings UI where the user can see it.
+    validate: (value) => {
+      void resolveConfig({
+        ...(config.councilPolicy ?? {}),
+        presets: applyOverrides(policy.presets, value.overrides),
+        defaultPreset: value.defaultPreset ?? policy.defaultPreset.id,
+      })
+    },
+  })
+
+  if (config.installPreset === false) return
+
+  const options = {
+    presetId: config.presetId ?? 'map-reduce',
+    sourceId: config.presetSource ?? 'standard',
+    name: config.presetName ?? 'Map-Reduce mode',
+    description: config.presetDescription ?? '',
+    order: config.presetOrder ?? 10,
+    rows: composeRows(
+      config.presetPluginName ?? '@deepseek-ai/dsh-tool-council/tool',
+      toolConfigOf(config.councilPolicy),
+    ),
+  }
+
+  // Deferred past boot: the `agent-presets` roster is a service that
+  // initializes after this dependency-free row, so reading it must wait for
+  // the tree to finish composing. The effect owns the timer so disposal clears
+  // a pending publication.
+  ctx.effect(() => {
+    let disposed = false
+    const timer = setTimeout(async () => {
+      // The roster is optional: a headless or rosterless deployment composes no
+      // presets at all, and that is a valid deployment rather than an error.
+      const ap = ctx.get('agentPresets') as AgentPresetsLike | undefined
+      const outcome = await ensurePreset(ap, options)
+      if (disposed) return
+      if (outcome.kind === 'installed') {
+        ctx.logger.info('dsh-tool-council: published the %s preset at %s', options.presetId, outcome.path)
+      } else if (outcome.kind === 'failed') {
+        ctx.logger.warn('dsh-tool-council: could not publish the %s preset — %s', options.presetId, outcome.reason)
+      } else if (outcome.kind === 'skipped') {
+        ctx.logger.info('dsh-tool-council: no %s preset published — %s', options.presetId, outcome.reason)
+      }
+    }, 0)
+    return () => { disposed = true; clearTimeout(timer) }
+  }, 'dsh-tool-council: preset installer lifetime')
+}

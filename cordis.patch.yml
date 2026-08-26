@@ -1,0 +1,46 @@
+# dsh-tool-council bundle patch: the always-composed host row.
+#
+# This row owns three things the model-facing tool deliberately does not, and
+# it is the only row this bundle contributes to the base composition:
+#
+#   1. preset publication — it derives the "Map-Reduce mode" agent preset from
+#      the `standard` roster entry and appends the council tool row, so the mode
+#      menu lists it beside Standard/Minimal/…;
+#   2. settings ownership — the `council` settings namespace lives here, on the
+#      host plane, so the browser settings card can reach it in every mode;
+#   3. browser bundle carrier — the client module system serves a package's
+#      browser bundle only for the entry whose name IS the package name.
+#
+# Composing this row registers no tool and no prompt section, so it costs the
+# model nothing in any mode. The model-facing tool itself is mounted by the
+# published preset under `dsh-tool-council/tool`.
+#
+# `councilPolicy` is the tool's own configuration, owned here so the settings
+# card mirrors the deployment's real topology and the published preset mounts
+# the tool with the same policy. Omit it for the four shipped topologies
+# (`bug-hunt`, `research`, `feature-design`, `refactor`) and the default
+# ceilings; declare it to replace the presets, raise a ceiling, or re-route a
+# role's model/provider.
+- insert:
+    - id: tool-council-host
+      name: '@deepseek-ai/dsh-tool-council'
+      config:
+        installPreset: true
+        presetId: map-reduce
+        presetSource: standard
+        presetName: 'Map-Reduce mode'
+        presetDescription: >-
+          Standard mode plus the council: one task fans out to independent
+          members, their findings are deduplicated, verified by a separate
+          panel, and reduced to a quorum report.
+        presetOrder: 10
+        # councilPolicy:
+        #   subagentProvider: spawn
+        #   toolName: council
+        #   maxAgentsPerLayer: 12
+        #   maxLayers: 6
+        #   maxFindings: 200
+        #   maxFindingChars: 2000
+        #   maxReportChars: 32768
+        #   defaultPreset: bug-hunt
+        #   presets: []        # replaces the four shipped topologies wholesale

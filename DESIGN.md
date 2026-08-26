@@ -1,0 +1,219 @@
+# dsh-council — map-reduce совет субагентов для DeepSeek Harness
+
+Дизайн-док, v1. Целевая ветка: `deepseek-ai/deepseek-harness@master` (v0.1.1-rc.2, dev preview).
+
+---
+
+## 1. Что это
+
+Плагин, который превращает одну задачу в **слоёный map-reduce прогон субагентов**:
+
+```
+                   ┌── correctness ──┐
+   task ──► MAP ───┼── api-contract ─┼──► findings[] ──► dedup
+                   ├── perf-scale ───┤
+                   └── tests ────────┘
+                                              │
+                   ┌── V1 replicator ─┐       ▼
+          VERIFY ──┼── V2 devil ──────┼──► votes ──► quorum ──► verdicts
+                   └── V3 impact ─────┘
+                                              │
+                                              ▼
+          REDUCE ──── synthesizer ──────► отчёт + таблица + план действий
+```
+
+Пользователь настраивает: **пресет задачи**, **число слоёв**, **роли внутри слоя**, **сколько копий каждой роли**, **правило кворума**. Модель на вызове передаёт только текст задачи — топология фиксируется деплойментом.
+
+Выход для `bug-hunt` — ровно та таблица, что в исходном скриншоте: находка × V1/V2/V3 × итог × что делать.
+
+---
+
+## 2. Ключевое архитектурное решение: поверх `workflowEngine`, а не поверх `ctx.subagents`
+
+В харнессе уже есть три вещи, которые иначе пришлось бы писать заново:
+
+| Что нужно | Что уже есть | Где |
+|---|---|---|
+| Параллельный запуск N детей с лимитом | `parallel(thunks)` + FIFO слот-очередь | `workflow-worker-thread/src/runtime.ts:223-245` |
+| Structured output от каждого ребёнка | `agent(prompt, { schema })` | `workflow-worker-thread/README.md`, «Script contract» |
+| Прогресс-UI прямо в чате | conversation node `workflow-run` | `packages/client/ui-workflow-run` |
+| Отмена, дисposal, аварийное убийство воркера | `WorkflowRun.cancel/dispose` | `workflow/runtime-types.ts:38-49` |
+| События жизненного цикла | `workflow/{start,phase,log,agent-start,agent-end,end}` | `workflow/src/index.ts:36-90` |
+
+Поэтому **`dsh-tool-council` — это Consumer, а не Provider**. Он ровно повторяет форму `@deepseek-ai/dsh-tool-ralph`: фиксированный, принадлежащий деплойменту скрипт оркестрации, который модель не может подменить.
+
+> **Смежное, что уже есть в репозитории.** `packages/experimental/agent-team` — долгоживущая команда: плоский ростер Lead/teammate, durable-почтовый ящик между пирами и общий DAG задач в логе сессии. Это *другая* форма, а не конкурент: там координация через сообщения и доску задач без конца прогона, здесь — ограниченный fan-out, который завершается за один вызов инструмента и отдаёт кворум. Если задача звучит как «команда работает над проектом» — брать agent-team; если «несколько независимых взглядов на один вопрос с проверкой» — council.
+
+```ts
+export const inject = ['tools', 'workflowEngine', 'subagents', 'systemPrompt']
+```
+
+**Что мы этим теряем.** Хук `agent()` принимает только `{ label, phase, schema, model }`. Значит per-role `persona` и `toolFilter` (которые `SubagentStartRequest` умеет) через workflow-движок **недоступны**. Роль различается промптом и `model`. Это осознанный размен: изоляция инструментов на роль → v2, и она потребует уйти на прямой `ctx.subagents.start()` с собственной слот-очередью, собственной отменой и собственным UI. Не стоит того в v1.
+
+**Что дети всё-таки умеют.** Провайдер `spawn` даёт ребёнку свежую сессию, которая присоединяется к пресету родителя (`applyChildComposition`, `child-agent.ts:163`) — то есть у верификатора есть `read`/`grep`/`bash`. Это принципиально: верификатор **перечитывает `rank.py:521` сам**, а не рассуждает по тексту находки. Без этого голосование измеряло бы согласованность формулировок, а не истину.
+
+---
+
+## 3. Протокол находки
+
+Единица обмена между слоями — `Finding`. Map-агенты возвращают их через `outputSchema`, поэтому парсинга прозы нет.
+
+```jsonc
+{
+  "findings": [{
+    "title": "Greedy scoring инвертирован",        // ≤120 симв., нормализованная строка
+    "location": "rank.py:521",                     // "path:line" или "path"; ключ дедупликации
+    "claim": "h_cond*(1-crr) ранжирует по остаточной энтропии, а не по приросту",
+    "evidence": "rank.py:519-524 — ...",           // цитата/наблюдение, не пересказ claim
+    "severity": "high",                            // blocker|high|medium|low
+    "confidence": 0.8,                             // 0..1, самооценка автора
+    "fix": "заменить на mi_with_prefix*(1-crr)"    // может быть ""
+  }]
+}
+```
+
+**Дедупликация — двухступенчатая:**
+
+1. **Детерминированная**, в скрипте: ключ `normalize(location) + '|' + fingerprint(title)`, где `fingerprint` — lowercase, выброс не-буквенно-цифровых, стоп-слова, сортированные токены. Совпал ключ → один кластер, `reportedBy` накапливает авторов.
+2. Кластеры с одинаковым `location`, но разным fingerprint, идут в **merge-агента** одним батчем: он решает, это одна находка или разные. Без него две формулировки одного бага получат по три голоса каждая и обе пройдут кворум.
+
+Порог по объёму: `maxFindings` (200) и `maxFindingChars` (2000) — иначе слой verify получит промпт, который не влезет в контекст.
+
+---
+
+## 4. Голосование
+
+Каждый верификатор получает **весь дедуплицированный список** и возвращает вердикт по каждой находке:
+
+```jsonc
+{ "verdicts": [{ "findingId": "f3", "vote": "confirmed", "reason": "перечитал stats.py:389 — len(hist) действительно sample NDV" }] }
+```
+
+`vote ∈ confirmed | rejected | not-a-bug | uncertain`.
+
+Различие `rejected` и `not-a-bug`: первое — «утверждение фактически неверно», второе — «факт верен, но это не дефект». В скриншоте строка 6 (`@key_columns не проверяется`) именно `NOT A BUG`, и терять это различие нельзя — оно меняет действие.
+
+**Правила кворума** (`quorum.rule`):
+
+| Правило | CONFIRMED когда |
+|---|---|
+| `majority` | `confirmed > (rejected + notABug)` |
+| `unanimous` | `confirmed == n` и нет `uncertain` |
+| `threshold` | `confirmed >= quorum.threshold` |
+
+`uncertain` **никогда не считается за подтверждение** — он только не даёт достичь `unanimous`. Итог `NOT A BUG` выигрывает, если `notABug` — модальный голос; иначе `REJECTED`.
+
+**Про декорреляцию.** N копий одной модели с одним промптом дают коррелированные ошибки: голосование тогда измеряет чувствительность к промпту, а не истину. Три встроенных средства:
+
+1. **Разные линзы**, а не разные сиды: V1 — независимо воспроизвести из исходников; V2 — адвокат дьявола, задача которого объяснить, почему это НЕ баг; V3 — принять как данность и оценить радиус поражения.
+2. **`model` на роль** — верификатор на другой модели, чем map-агент.
+3. **Верификатор не видит чужих голосов** — слой запускается одним `parallel()`, никакого обмена.
+
+Это уменьшает корреляцию, но не убирает. В отчёте кворум подписан как *«N из M верификаторов подтвердили»*, а не как «подтверждено» — self-report, а не сертификация. То же самое ограничение честно записано у Ralph: «Completion and blockers are worker reports, not independent evaluation».
+
+---
+
+## 5. Схема конфига (cordis.yml)
+
+```yaml
+- id: tool-council
+  name: '@deepseek-ai/dsh-tool-council'
+  config:
+    subagentProvider: spawn
+    toolName: council
+    maxAgentsPerLayer: 12
+    maxLayers: 6
+    maxFindings: 200
+    maxFindingChars: 2000
+    defaultPreset: bug-hunt
+    presets:
+      - id: bug-hunt
+        description: Поиск дефектов в диффе или модуле с перекрёстной верификацией.
+        reduceMode: vote            # vote | synthesis
+        layers:
+          - id: map
+            kind: map
+            roles:
+              - { id: correctness,  count: 1, prompt: '...' }
+              - { id: api-contract, count: 1, prompt: '...' }
+              - { id: perf-scale,   count: 1, prompt: '...' }
+              - { id: tests,        count: 1, prompt: '...' }
+          - id: verify
+            kind: verify
+            quorum: { rule: majority }
+            roles:
+              - { id: V1, label: replicator, prompt: '...' }
+              - { id: V2, label: devil,      prompt: '...' }
+              - { id: V3, label: impact,     prompt: '...' }
+          - id: reduce
+            kind: reduce
+            roles:
+              - { id: synthesizer, prompt: '...' }
+```
+
+Ширина слоя = `sum(role.count)`, ограничена `maxAgentsPerLayer`. Глубина = `layers.length`, ограничена `maxLayers`. Оба лимита — потолки деплоймента, пользователь опускает их, но не поднимает (тот же приём, что `resolveMaxRounds` у Ralph).
+
+**Валидация в `apply()`, не в schemastery.** Schemastery не выражает «ровно один reduce-слой последним», «kind: verify требует непустой quorum», «id ролей уникальны в пределах слоя». Поэтому `resolveConfig()` бросает на загрузке — плохой конфиг должен ронять деплоймент, а не вызов инструмента (`spill-policy/src/index.ts:113-119` — тот же приём).
+
+### Пресеты v1
+
+| Пресет | Слои | Reduce | Когда |
+|---|---|---|---|
+| `bug-hunt` | map(4) → verify(3) → reduce(1) | `vote` | ревью диффа, аудит модуля |
+| `research` | map(4) → reduce(1) | `synthesis` | сравнить подходы, собрать контекст |
+| `feature-design` | map(3 варианта) → verify(2 критика) → reduce(1) | `synthesis` | выбрать дизайн, ADR |
+| `refactor` | map(2 план) → verify(3 регресс-риск) → reduce(1) | `vote` | безопасность рефакторинга |
+
+`reduceMode: synthesis` пропускает голосование: reduce-агент получает сырые выходы map и пишет связный документ. Пользователь выбрал «голосование + дедуп» как основной механизм — `synthesis` остаётся для research/design, где дискретных «находок» нет.
+
+---
+
+## 6. Границы и защита
+
+Скрипт workflow — доверенный, деплойментский, модель его не пишет. Но значения из детей идут через `materializeFromRealm`, а из скрипта на хост — через structured clone. Поэтому:
+
+- скрипт валидирует каждый `Finding`/`Verdict` перед тем, как класть в следующий слой;
+- хост **пересчитывает кворум заново** из сырых голосов и бросает, если не сошлось со скриптовым. Дублирование намеренное — это уже принятая в репозитории дисциплина (`readReport`/`readRunResult` в `tool-ralph`), и хостовая копия — та, что покрывается юнит-тестами до 100%.
+
+`agent()` вернул `null` (ребёнок упал) → его находки/голоса просто отсутствуют; фатальные `WorkflowError` пробрасываются и убивают прогон. Слой, где выжило меньше двух верификаторов, помечает все вердикты `INSUFFICIENT` вместо того, чтобы объявлять кворум по одному голосу.
+
+---
+
+## 7. UI
+
+Две точки, обе — существующие слоты, репозиторий править не нужно:
+
+**Настройка** — карточка в `settings.plugin.item`, ключ `council`.
+Хост объявляет секцию через `installSettingsSection(ctx, settingsNamespace('council'), Config, config, hooks)`; вкладка «Plugin configuration» сама диспатчит слот по namespace. Пользователь правит: пресет по умолчанию, число копий на роль, правило кворума, модель на роль.
+
+**Прогресс** — бесплатно. Прогон идёт через `ctx.workflowEngine`, а `packages/client/ui-workflow-run` уже регистрирует conversation node `workflow-run`, который рисует фазы и детей. `phase('map')` / `phase('verify')` / `phase('reduce')` в скрипте становятся видимыми группами.
+
+Ограничения клиентского плана, о которые легко споткнуться:
+- компоненты **не видят `ctx`** — только `inject().hooks` и стор;
+- **value-импорты между клиентскими плагинами запрещены** гейтом чистоты бандла (`tsdown.client.ts:479-497`) — `CardForm`/`ValueField` из `ui-settings-plugins` придётся скопировать, а не импортировать;
+- `@Remote` в v1 не нужен: конфиг ходит через `settingsScope`, прогресс — через workflow-node.
+
+---
+
+## 8. Что править вне пакета
+
+| Файл | Зачем |
+|---|---|
+| `tsconfig.host.json` → `references` | хост-пакет |
+| `tsconfig.client.json` → `references` | клиентский пакет |
+| `examples/package.json` → `dependencies` | если пример на него ссылается (`verify-cordis-config`) |
+| `packages/bundle/base/package.json` + `cordis.patch.yml` | только когда идём в продукт |
+
+Обязательные файлы пакета, без которых падают гейты: `src/invariant.ts` (иначе валятся **все** тесты пакета — `scripts/test-invariants.ts:145-157`), триплет `README.md` / `README.zh.md` / `README.i18n.yaml`, секция «Known Limitations and Deferred Work» в README.
+
+Проверка: `pnpm run constraints && pnpm run typecheck && pnpm run lint && pnpm run test:coverage` (гейт — 100% per-file), затем `pnpm run doc-sync`.
+
+---
+
+## 9. Что осознанно не делается в v1
+
+- **Per-role tool filter и persona** — недоступны через хук `agent()`; требуют ухода с workflow-движка.
+- **Циклы verify → fix → re-verify** — топология остаётся ациклической цепочкой слоёв. Итеративное исполнение уже покрыто `tool-ralph`; смешивать не надо.
+- **Кросс-слойная память** — между слоями едут только findings/votes, не транскрипты детей. Общая память — рабочая директория, как у Ralph.
+- **Полноценный DAG-редактор** — пользователь выбрал «слои + роли»; узлы и рёбра дороже и в реализации, и в UX.
+- **Голоса с весами / калибровка по истории** — требует накопления данных о том, кто из верификаторов бывает прав.
