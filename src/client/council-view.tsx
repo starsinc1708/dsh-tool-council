@@ -8,6 +8,7 @@
  * @module @deepseek-ai/dsh-client-ui-council
  */
 
+import { useSyncExternalStore } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
 import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -17,6 +18,17 @@ import type {} from '@deepseek-ai/dsh-client-ui-workflow-run/client'
 import type { CouncilKey } from './locales.ts'
 import { NS } from './locales.ts'
 import css from './council-view.module.css'
+
+/** The projection face a member's child session exposes for its token usage. */
+interface UsageFace {
+  getSnapshot(): unknown
+  subscribe(listener: () => void): () => void
+}
+
+/** The sessions seam the view reads child projections through. */
+interface SessionsLike {
+  binding(id: string): { session?: { projections: { faceOf(key: string): UsageFace } } } | undefined
+}
 
 /** The published preset id this view is for. */
 const COUNCIL_PRESET = 'map-reduce'
@@ -71,27 +83,31 @@ const ROLE_GLOSSARY: Record<string, string> = {
 
 /** Everything the view's slot registration injects. */
 export interface CouncilViewInjected {
-  /** Read one member's cumulative token usage from its child session. */
-  readMemberUsage: (childId: string) => TokenUsageProjection | undefined
+  /** Reactively read one member's cumulative token usage from its child session. */
+  useMemberUsage: (childId: string) => TokenUsageProjection | undefined
+}
+
+/** Build the live token-usage hook bound to one child session's projection. */
+function makeUseMemberUsage(sessions: SessionsLike) {
+  return function useMemberUsage(childId: string): TokenUsageProjection | undefined {
+    return useSyncExternalStore(
+      (onChange) => sessions.binding(childId)?.session?.projections.faceOf('tokenUsage')?.subscribe(onChange) ?? (() => {}),
+      () => sessions.binding(childId)?.session?.projections.faceOf('tokenUsage')?.getSnapshot() as TokenUsageProjection | undefined,
+    )
+  }
 }
 
 /** Register the Council conversation-view tab. */
 export function registerCouncilView(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
+  const useMemberUsage = makeUseMemberUsage(ctx.sessions as unknown as SessionsLike)
   ctx.slots.inject('conversation.view', () => ctx.slots.register({
     name: 'conversation.view',
     id: 'council',
     order: 20,
     locale: NS,
     label: () => t('view.council'),
-    inject: () => ({
-      readMemberUsage: (childId: string) => {
-        const sessions = ctx.sessions as unknown as {
-          binding(id: string): { session?: { projections: { get(key: string): unknown } } } | undefined
-        }
-        return sessions.binding(childId)?.session?.projections.get('tokenUsage') as TokenUsageProjection | undefined
-      },
-    }),
+    inject: () => ({ useMemberUsage }),
   }, CouncilView))
 }
 
@@ -107,7 +123,7 @@ interface CouncilRun {
 function CouncilView(
   props: ConvViewProps & PropsLocale<'council'> & InjectFace<CouncilViewInjected>,
 ) {
-  const { useSession, useSessions, sessionId, t, readMemberUsage } = props
+  const { useSession, useSessions, sessionId, t, useMemberUsage } = props
   const preset = useSessions(state => state.byId[sessionId]?.agentPreset)
   const chat = useSession(state => state.chat)
 
@@ -146,7 +162,8 @@ function CouncilView(
                     key={member.seq}
                     label={member.label}
                     status={member.status}
-                    usage={readMemberUsage(member.childId)}
+                    childId={member.childId}
+                    useMemberUsage={useMemberUsage}
                     t={t}
                   />
                 ))}
@@ -162,7 +179,8 @@ function CouncilView(
 interface MemberProps {
   readonly label: string
   readonly status: string
-  readonly usage: TokenUsageProjection | undefined
+  readonly childId: string
+  readonly useMemberUsage: (childId: string) => TokenUsageProjection | undefined
   readonly t: (key: CouncilKey, args?: Record<string, unknown>) => string
 }
 
