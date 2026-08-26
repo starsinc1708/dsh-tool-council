@@ -61,7 +61,7 @@ a restart.
 
 ```sh
 dsh plugin --profile web add ./dsh-tool-council      # a local checkout
-dsh plugin --profile web add ./dsh-tool-council-0.1.1-rc.2.tgz   # pnpm pack output
+dsh plugin --profile web add ./starsinc1708-dsh-tool-council-0.1.1-rc.2.tgz   # pnpm pack output
 ```
 
 Both skip the git fetch and need no build allowance either. Use a local checkout
