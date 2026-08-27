@@ -176,6 +176,7 @@ function stubClientContext(registered: Array<{ name: string; key: string }>): un
     locale: { register: () => () => {}, bind: () => (key: string) => key },
     settingsScope: { bind: () => scope },
     sessions: { binding: () => undefined },
+    workspaces: { openPath: async () => {} },
     slots: {
       inject: (_name: string, run: () => unknown) => run(),
       register: (spec: { name: string; key?: string; id?: string }) => {

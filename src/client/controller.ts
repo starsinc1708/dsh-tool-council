@@ -32,6 +32,45 @@ export interface WidthViolation {
   readonly max: number
 }
 
+/**
+ * How much of the composition the staged overlay is currently changing.
+ *
+ * Computed here rather than in the card for two reasons: it is the number the
+ * tab badges and the summary line both read, and a count that disagrees with
+ * itself between the two is exactly how a role ends up badged `overridden` at
+ * its default value with nobody able to find it.
+ */
+export interface OverrideCounts {
+  /** Overrides per preset id. A preset with none is ABSENT, never zero. */
+  readonly byPreset: Readonly<Record<string, number>>
+  /** Role plus quorum overrides across every preset. */
+  readonly total: number
+  /** How many presets carry at least one. */
+  readonly presets: number
+}
+
+/**
+ * Count the role and quorum overrides in an overlay.
+ *
+ * Roles and quorums are counted together because they are the same thing to the
+ * reader: a difference from what this deployment composed. An entry that
+ * survived with empty maps counts as nothing and is left out of `byPreset`, so
+ * `presets` never counts a preset whose badge would read `·0`.
+ * @param overrides - the staged (or saved) overlay.
+ * @returns the per-preset counts and the two totals.
+ */
+export function countOverrides(overrides: Record<string, PresetOverride>): OverrideCounts {
+  const byPreset: Record<string, number> = {}
+  let total = 0
+  for (const [presetId, override] of Object.entries(overrides)) {
+    const count = Object.keys(override.roles ?? {}).length + Object.keys(override.quorums ?? {}).length
+    if (count === 0) continue
+    byPreset[presetId] = count
+    total += count
+  }
+  return { byPreset, total, presets: Object.keys(byPreset).length }
+}
+
 /** What the card renders. */
 export interface CouncilCardState {
   readonly status: 'loading' | 'ready' | 'unavailable'
@@ -44,6 +83,14 @@ export interface CouncilCardState {
   readonly defaultPreset: string
   /** Staged overrides, merged over what the Host last accepted. */
   readonly overrides: Record<string, PresetOverride>
+  /**
+   * How many overrides the overlay carries, per preset and in total.
+   *
+   * The tab badges and the summary line both read this, so a preset whose
+   * overrides are on a tab nobody opened is still visible from the outside —
+   * which is what stops an override being lost behind three closed tabs.
+   */
+  readonly overrideCounts: OverrideCounts
   /** The deployment's per-layer width ceiling, mirrored by the Host. */
   readonly maxAgentsPerLayer: number
   /** Blended $ per 1M tokens for the Council tab's estimate; 0 means off. */
@@ -76,6 +123,7 @@ const EMPTY: CouncilCardState = {
   selected: '',
   defaultPreset: '',
   overrides: {},
+  overrideCounts: { byPreset: {}, total: 0, presets: 0 },
   maxAgentsPerLayer: 0,
   costPerMillionTokens: 0,
   totalAgents: 0,
@@ -148,6 +196,12 @@ export function readOverridesDocument(value: unknown): Record<string, PresetOver
         const { rule, threshold } = quorum as { rule?: QuorumRule; threshold?: number }
         if (rule !== undefined && !['majority', 'unanimous', 'threshold'].includes(rule)) return undefined
         if (threshold !== undefined && (!Number.isSafeInteger(threshold) || threshold < 1)) return undefined
+        // An entry carrying neither field is not an override, exactly as
+        // `pruneRole` treats a role whose routes were all cleared. Storing it
+        // would badge the preset `·1` and show the composed rule in the select:
+        // an override the reader cannot find, which is the phantom the tab
+        // badges exist to prevent.
+        if (rule === undefined && threshold === undefined) continue
         quorums[key] = { ...rule === undefined ? {} : { rule }, ...threshold === undefined ? {} : { threshold } }
       }
     }
@@ -239,6 +293,16 @@ export class CouncilCardController {
   private error = ''
 
   private detachUnloadGuard: (() => void) | undefined
+  /**
+   * Release for the settings-scope subscription.
+   *
+   * Held, not discarded: a controller that keeps publishing after `dispose()`
+   * is not merely wasteful. `syncUnloadGuard` would see it dirty with no guard
+   * attached and attach a FRESH `beforeunload` handler whose detach closure
+   * nothing can ever call again — one hot reload with staged edits and the
+   * browser asks "leave site?" for the rest of the session.
+   */
+  private detachScope: (() => void) | undefined
 
   constructor(
     private readonly scope: SettingsScope<CouncilSettings>,
@@ -248,12 +312,17 @@ export class CouncilCardController {
      */
     private readonly partialSaveMessage: (error: string) => string = error => error,
   ) {
-    scope.subscribe(() => { this.publish() })
+    this.detachScope = scope.subscribe(() => { this.publish() })
     this.publish()
   }
 
-  /** Release the unload guard. Owned by the client plugin's effect. */
+  /**
+   * Detach from the scope and drop the unload guard. Owned by the client
+   * plugin's effect, which calls it on dispose and on hot reload.
+   */
   dispose(): void {
+    this.detachScope?.()
+    this.detachScope = undefined
     this.detachUnloadGuard?.()
     this.detachUnloadGuard = undefined
     this.listeners.clear()
@@ -348,8 +417,26 @@ export class CouncilCardController {
       /** Drop every override for the shown preset and re-inherit the composition. */
       resetPreset: () => {
         const next = this.draft()
+        // Staging unconditionally would mark the card dirty, enable Save, and
+        // arm the unload guard for a write of the identical document — the
+        // preset had nothing to reset. `revertRole` returns early for the same
+        // reason and `resetAll`'s button is disabled at zero.
+        if (next[this.currentPresetId()] === undefined) return
         delete next[this.currentPresetId()]
         this.staged = next
+        this.error = ''
+        this.publish()
+      },
+      /**
+       * Drop the WHOLE overlay, every preset at once.
+       *
+       * Staged like every other edit rather than written straight through: it
+       * is the most destructive control on the card, so it has to be
+       * discardable, and it has to mark the card dirty so the badge and the
+       * unload guard both say something is pending.
+       */
+      resetAll: () => {
+        this.staged = {}
         this.error = ''
         this.publish()
       },
@@ -420,29 +507,40 @@ export class CouncilCardController {
     // The scope writes one field at a time and offers no transaction, so the
     // expensive field goes FIRST and each is cleared as it lands: a refusal on
     // the second must not silently discard the first, nor re-send it on retry.
+    // Whether ANY field reached the Host. Derived, never inferred from which
+    // fields are still staged: "overrides cleared and default still staged"
+    // is also what a save that wrote nothing at all looks like when only the
+    // default was staged, and reporting that as a partial save is a lie in the
+    // reader's favour — they would think their overrides had landed.
+    let landed = false
     try {
       if (this.staged !== undefined) {
         await this.scope.set('overrides', this.staged)
         this.staged = undefined
+        landed = true
       }
       if (this.stagedDefault !== undefined) {
         await this.scope.set('defaultPreset', this.stagedDefault)
         this.stagedDefault = undefined
+        landed = true
       }
       if (this.stagedCost !== undefined) {
         await this.scope.set('costPerMillionTokens', this.stagedCost)
         this.stagedCost = undefined
+        landed = true
       }
       this.error = ''
     } catch (error: unknown) {
       // The Host refuses a section its `validate` hook rejects. The card
       // catches the width and threshold cases before the write, so anything
       // arriving here is a rule the card does not model — show the Host's own
-      // words, and say plainly when only part of the save landed.
+      // words, and say plainly when only part of the save landed. Partial means
+      // exactly that: something was written AND something is still pending.
       const message = error instanceof Error ? error.message : String(error)
-      this.error = this.staged === undefined && this.stagedDefault !== undefined
-        ? this.partialSaveMessage(message)
-        : message
+      const pending = this.staged !== undefined
+        || this.stagedDefault !== undefined
+        || this.stagedCost !== undefined
+      this.error = landed && pending ? this.partialSaveMessage(message) : message
     }
     this.publish()
   }
@@ -464,6 +562,7 @@ export class CouncilCardController {
       selected,
       defaultPreset: this.stagedDefault ?? snapshot.value?.defaultPreset ?? first,
       overrides,
+      overrideCounts: countOverrides(overrides),
       maxAgentsPerLayer,
       costPerMillionTokens: this.stagedCost ?? snapshot.value?.costPerMillionTokens ?? 0,
       totalAgents: shown === undefined ? 0 : shown.layers.reduce(

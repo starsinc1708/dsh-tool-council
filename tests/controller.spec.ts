@@ -5,12 +5,22 @@
  * the JSON transfer's round trip.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  CouncilCardController, quorumViolations, readOverridesDocument, widthViolations,
+  CouncilCardController, countOverrides, quorumViolations, readOverridesDocument, widthViolations,
 } from '../src/client/controller.ts'
 import type { CouncilSettings, PresetOverride, TopologyPreset } from '../src/settings.ts'
+
+const RESEARCH: TopologyPreset = {
+  id: 'research',
+  label: 'Research',
+  description: 'investigate',
+  layers: [
+    { id: 'map', kind: 'map', roles: [{ id: 'prior', label: 'Prior art', count: 2, model: '', provider: '' }] },
+    { id: 'reduce', kind: 'reduce', roles: [{ id: 'synth', label: 'Synthesizer', count: 1, model: '', provider: '' }] },
+  ],
+}
 
 const TOPOLOGY: TopologyPreset[] = [{
   id: 'bug-hunt',
@@ -62,6 +72,16 @@ class FakeScope implements SettingsScope<CouncilSettings> {
     return () => { this.listeners.delete(listener) }
   }
 
+  /** How many subscribers are still attached — a disposed controller is none. */
+  get subscriberCount(): number {
+    return this.listeners.size
+  }
+
+  /** Push a change from the Host, as a write by another client would. */
+  emit(): void {
+    for (const listener of this.listeners) listener()
+  }
+
   async set(field: string, value: unknown): Promise<void> {
     if (this.rejection !== undefined) throw this.rejection
     this.writes.push({ field, value })
@@ -74,15 +94,21 @@ class FakeScope implements SettingsScope<CouncilSettings> {
   }
 }
 
-function controller(overrides: Record<string, PresetOverride> = {}, maxAgentsPerLayer = 12) {
+function controller(
+  overrides: Record<string, PresetOverride> = {},
+  maxAgentsPerLayer = 12,
+  topology: TopologyPreset[] = TOPOLOGY,
+) {
   const scope = new FakeScope({
     defaultPreset: 'bug-hunt',
-    topology: TOPOLOGY,
+    topology,
     maxAgentsPerLayer,
     agentPresetId: 'map-reduce',
     overrides,
   })
-  const card = new CouncilCardController(scope)
+  // A DISTINGUISHING partial-save message: with the default identity function
+  // both arms produce the same string and a test cannot tell them apart.
+  const card = new CouncilCardController(scope, error => `PARTIAL: ${error}`)
   return { scope, card, actions: card.actions(), store: card.store() }
 }
 
@@ -260,5 +286,204 @@ describe('CouncilCardController quorum threshold', () => {
     // quorum copies, so it is a valid document.
     actions.setQuorum('verify', 'threshold')
     expect(store.getSnapshot().quorumViolations).toEqual([])
+  })
+})
+
+describe('countOverrides', () => {
+  it('counts role and quorum overrides together, per preset and in total', () => {
+    expect(countOverrides({
+      'bug-hunt': { roles: { 'map.correctness': { count: 2 }, 'map.tests': { model: 'x' } }, quorums: { verify: { rule: 'unanimous' } } },
+      'research': { roles: { 'map.prior': { count: 3 } }, quorums: {} },
+    })).toEqual({ byPreset: { 'bug-hunt': 3, 'research': 1 }, total: 4, presets: 2 })
+  })
+
+  it('leaves a preset whose maps are empty out entirely, never badging it zero', () => {
+    // The Host can hand back an entry the pruning would have dropped; a `·0`
+    // badge would send the reader to a tab with nothing on it.
+    expect(countOverrides({ 'bug-hunt': { roles: {}, quorums: {} } }))
+      .toEqual({ byPreset: {}, total: 0, presets: 0 })
+    expect(countOverrides({})).toEqual({ byPreset: {}, total: 0, presets: 0 })
+  })
+
+  it('tolerates an entry with neither map', () => {
+    expect(countOverrides({ 'bug-hunt': {} }).total).toBe(0)
+  })
+})
+
+describe('CouncilCardController override counts', () => {
+  it('publishes the badge count for a preset the card is not showing', () => {
+    // The whole point: an override on `research` is visible while `bug-hunt`
+    // is the open tab.
+    const { actions, store } = controller({ research: { roles: { 'map.prior': { count: 4 } } } }, 12,
+      [...TOPOLOGY, RESEARCH])
+    expect(store.getSnapshot().selected).toBe('bug-hunt')
+    expect(store.getSnapshot().overrideCounts.byPreset['research']).toBe(1)
+
+    actions.setRoleCount('map', 'correctness', 2)
+    const counts = store.getSnapshot().overrideCounts
+    expect(counts.byPreset).toEqual({ 'research': 1, 'bug-hunt': 1 })
+    expect(counts.total).toBe(2)
+    expect(counts.presets).toBe(2)
+  })
+
+  it('counts a quorum edit as an override too', () => {
+    const { actions, store } = controller()
+    actions.setQuorum('verify', 'unanimous')
+    expect(store.getSnapshot().overrideCounts).toEqual({ byPreset: { 'bug-hunt': 1 }, total: 1, presets: 1 })
+  })
+
+  it('drops back to zero when the last override is reverted', () => {
+    const { actions, store } = controller()
+    actions.setRoleModel('map', 'correctness', 'deepseek-reasoner')
+    expect(store.getSnapshot().overrideCounts.total).toBe(1)
+    actions.revertRole('map', 'correctness')
+    expect(store.getSnapshot().overrideCounts).toEqual({ byPreset: {}, total: 0, presets: 0 })
+  })
+})
+
+describe('CouncilCardController reset all', () => {
+  it('clears every preset, not only the one being shown', () => {
+    const { actions, store } = controller({
+      'bug-hunt': { roles: { 'map.tests': { count: 2 } } },
+      'research': { roles: { 'map.prior': { count: 3 } } },
+    }, 12, [...TOPOLOGY, RESEARCH])
+    expect(store.getSnapshot().overrideCounts.total).toBe(2)
+
+    actions.resetAll()
+    expect(store.getSnapshot().overrides).toEqual({})
+    expect(store.getSnapshot().overrideCounts).toEqual({ byPreset: {}, total: 0, presets: 0 })
+  })
+
+  it('is staged: it marks the card dirty and is undone by Discard', () => {
+    // It is the most destructive control on the card, so it must be
+    // recoverable exactly like every other edit.
+    const saved = { 'bug-hunt': { roles: { 'map.tests': { count: 2 } } } }
+    const { actions, store } = controller(saved)
+    actions.resetAll()
+    expect(store.getSnapshot().dirty).toBe(true)
+    expect(store.getSnapshot().overrides).toEqual({})
+
+    actions.discard()
+    expect(store.getSnapshot().dirty).toBe(false)
+    expect(store.getSnapshot().overrides).toEqual(saved)
+    expect(store.getSnapshot().overrideCounts.total).toBe(1)
+  })
+
+  it('writes the empty overlay through on save, like any other staged edit', async () => {
+    const { actions, scope } = controller({ 'bug-hunt': { roles: { 'map.tests': { count: 2 } } } })
+    actions.resetAll()
+    actions.save()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(scope.writes).toEqual([{ field: 'overrides', value: {} }])
+  })
+})
+
+describe('CouncilCardController disposal', () => {
+  it('detaches from the settings scope, so a dead controller stops publishing', () => {
+    const { card, scope } = controller()
+    expect(scope.subscriberCount).toBe(1)
+    card.dispose()
+    expect(scope.subscriberCount).toBe(0)
+  })
+
+  it('does not re-arm the unload guard after disposal', () => {
+    // The real damage: a dirty controller that outlives dispose() sees itself
+    // dirty with no guard attached on the next Host push and attaches a FRESH
+    // `beforeunload` whose detach closure nothing can call again — the browser
+    // then asks "leave site?" for the rest of the session.
+    const attached: string[] = []
+    const originalAdd = globalThis.window?.addEventListener
+    const stub = {
+      addEventListener: (type: string) => { attached.push(`+${type}`) },
+      removeEventListener: (type: string) => { attached.push(`-${type}`) },
+    }
+    vi.stubGlobal('window', stub)
+    try {
+      const { card, actions, scope } = controller()
+      actions.setRoleCount('map', 'correctness', 3)
+      expect(attached).toEqual(['+beforeunload'])
+
+      card.dispose()
+      expect(attached).toEqual(['+beforeunload', '-beforeunload'])
+
+      // A later Host push must not reach the dead controller at all.
+      scope.emit()
+      expect(attached).toEqual(['+beforeunload', '-beforeunload'])
+    } finally {
+      vi.unstubAllGlobals()
+      expect(originalAdd === undefined || typeof globalThis.window?.addEventListener === 'function').toBe(true)
+    }
+  })
+})
+
+describe('CouncilCardController partial-save reporting', () => {
+  it('does NOT claim a partial save when nothing landed', async () => {
+    // Only the default was staged and its write failed: zero writes landed, so
+    // "the overrides were saved but the default preset was not" is a lie in the
+    // reader's favour — they would believe their overrides were written.
+    const { actions, store, scope } = controller()
+    actions.setDefaultPreset('research')
+    scope.rejection = new TypeError('host said no')
+    actions.save()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(store.getSnapshot().error).toBe('host said no')
+    expect(store.getSnapshot().error).not.toContain('PARTIAL')
+  })
+
+  it('DOES report a partial save when an earlier field landed and a later one did not', async () => {
+    // overrides land, costPerMillionTokens is refused: a genuine 2-of-3 that
+    // the old predicate reported as a plain error because it only ever looked
+    // at `staged` and `stagedDefault`.
+    const { actions, store, scope } = controller()
+    actions.setRoleCount('map', 'correctness', 2)
+    actions.setCostRate(3)
+    const realSet = scope.set.bind(scope)
+    let calls = 0
+    scope.set = async (field: string, value: unknown) => {
+      calls += 1
+      if (calls > 1) throw new TypeError('cost refused')
+      await realSet(field, value)
+    }
+    actions.save()
+    for (let tick = 0; tick < 6; tick += 1) await Promise.resolve()
+    expect(store.getSnapshot().error).toBe('PARTIAL: cost refused')
+    expect(scope.writes.map(write => write.field)).toEqual(['overrides'])
+  })
+})
+
+describe('CouncilCardController resetPreset', () => {
+  it('does nothing at all when the shown preset has no overrides', () => {
+    // Staging a no-op would enable Save, show the unsaved badge and arm the
+    // unload guard for a write of the identical document.
+    const { actions, store } = controller()
+    expect(store.getSnapshot().dirty).toBe(false)
+    actions.resetPreset()
+    expect(store.getSnapshot().dirty).toBe(false)
+    expect(store.getSnapshot().overrides).toEqual({})
+  })
+
+  it('still clears a preset that does have overrides', () => {
+    const { actions, store } = controller({ 'bug-hunt': { roles: { 'map.tests': { count: 2 } } } })
+    actions.resetPreset()
+    expect(store.getSnapshot().dirty).toBe(true)
+    expect(store.getSnapshot().overrides).toEqual({})
+  })
+})
+
+describe('readOverridesDocument empty quorum', () => {
+  it('drops a quorum entry carrying neither rule nor threshold', () => {
+    // It would survive pruning, badge the preset `·1`, and show the composed
+    // rule in the select: an override the reader cannot find.
+    expect(readOverridesDocument({ 'bug-hunt': { quorums: { verify: {} } } })).toEqual({})
+    expect(countOverrides(readOverridesDocument({ 'bug-hunt': { quorums: { verify: {} } } }) ?? {}).total).toBe(0)
+  })
+
+  it('keeps a quorum entry that carries either field', () => {
+    expect(readOverridesDocument({ x: { quorums: { verify: { rule: 'unanimous' } } } }))
+      .toEqual({ x: { roles: {}, quorums: { verify: { rule: 'unanimous' } } } })
+    expect(readOverridesDocument({ x: { quorums: { verify: { threshold: 2 } } } }))
+      .toEqual({ x: { roles: {}, quorums: { verify: { threshold: 2 } } } })
   })
 })

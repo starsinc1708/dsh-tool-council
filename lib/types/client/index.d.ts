@@ -17,7 +17,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
         council: CouncilKey;
     }
 }
-/** Required services: card slot, graph view slot, session token reads, locale. */
+/**
+ * Required services: card slot, graph view slot, session token reads, locale,
+ * and `workspaces` for opening a finding's file from the verdict table.
+ */
 export declare const inject: string[];
 /**
  * Contribute the council settings card and the council graph conversation view.

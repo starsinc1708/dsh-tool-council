@@ -30,6 +30,7 @@ export interface CouncilCardFace {
     revertRole: (layerId: string, roleId: string) => void;
     setQuorum: (layerId: string, rule: QuorumRule, threshold?: number) => void;
     resetPreset: () => void;
+    resetAll: () => void;
     exportOverrides: () => string;
     importOverrides: (text: string) => boolean;
     discard: () => void;

@@ -31,8 +31,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Required services: card slot, graph view slot, session token reads, locale. */
-export const inject = ['slots', 'locale', 'connection', 'settingsScope', 'sessions']
+/**
+ * Required services: card slot, graph view slot, session token reads, locale,
+ * and `workspaces` for opening a finding's file from the verdict table.
+ */
+export const inject = ['slots', 'locale', 'connection', 'settingsScope', 'sessions', 'workspaces']
 
 /**
  * Contribute the council settings card and the council graph conversation view.

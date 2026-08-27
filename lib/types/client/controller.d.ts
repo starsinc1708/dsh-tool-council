@@ -26,6 +26,33 @@ export interface WidthViolation {
     readonly width: number;
     readonly max: number;
 }
+/**
+ * How much of the composition the staged overlay is currently changing.
+ *
+ * Computed here rather than in the card for two reasons: it is the number the
+ * tab badges and the summary line both read, and a count that disagrees with
+ * itself between the two is exactly how a role ends up badged `overridden` at
+ * its default value with nobody able to find it.
+ */
+export interface OverrideCounts {
+    /** Overrides per preset id. A preset with none is ABSENT, never zero. */
+    readonly byPreset: Readonly<Record<string, number>>;
+    /** Role plus quorum overrides across every preset. */
+    readonly total: number;
+    /** How many presets carry at least one. */
+    readonly presets: number;
+}
+/**
+ * Count the role and quorum overrides in an overlay.
+ *
+ * Roles and quorums are counted together because they are the same thing to the
+ * reader: a difference from what this deployment composed. An entry that
+ * survived with empty maps counts as nothing and is left out of `byPreset`, so
+ * `presets` never counts a preset whose badge would read `·0`.
+ * @param overrides - the staged (or saved) overlay.
+ * @returns the per-preset counts and the two totals.
+ */
+export declare function countOverrides(overrides: Record<string, PresetOverride>): OverrideCounts;
 /** What the card renders. */
 export interface CouncilCardState {
     readonly status: 'loading' | 'ready' | 'unavailable';
@@ -38,6 +65,14 @@ export interface CouncilCardState {
     readonly defaultPreset: string;
     /** Staged overrides, merged over what the Host last accepted. */
     readonly overrides: Record<string, PresetOverride>;
+    /**
+     * How many overrides the overlay carries, per preset and in total.
+     *
+     * The tab badges and the summary line both read this, so a preset whose
+     * overrides are on a tab nobody opened is still visible from the outside —
+     * which is what stops an override being lost behind three closed tabs.
+     */
+    readonly overrideCounts: OverrideCounts;
     /** The deployment's per-layer width ceiling, mirrored by the Host. */
     readonly maxAgentsPerLayer: number;
     /** Blended $ per 1M tokens for the Council tab's estimate; 0 means off. */
@@ -114,13 +149,26 @@ export declare class CouncilCardController {
     private selected;
     private error;
     private detachUnloadGuard;
+    /**
+     * Release for the settings-scope subscription.
+     *
+     * Held, not discarded: a controller that keeps publishing after `dispose()`
+     * is not merely wasteful. `syncUnloadGuard` would see it dirty with no guard
+     * attached and attach a FRESH `beforeunload` handler whose detach closure
+     * nothing can ever call again — one hot reload with staged edits and the
+     * browser asks "leave site?" for the rest of the session.
+     */
+    private detachScope;
     constructor(scope: SettingsScope<CouncilSettings>, 
     /**
      * How to phrase a half-applied save. Injected so the controller stays free
      * of the locale service, which is a different plugin's value.
      */
     partialSaveMessage?: (error: string) => string);
-    /** Release the unload guard. Owned by the client plugin's effect. */
+    /**
+     * Detach from the scope and drop the unload guard. Owned by the client
+     * plugin's effect, which calls it on dispose and on hot reload.
+     */
     dispose(): void;
     /**
      * Keep a `beforeunload` guard attached exactly while edits are staged.
@@ -149,6 +197,15 @@ export declare class CouncilCardController {
         save: () => void;
         /** Drop every override for the shown preset and re-inherit the composition. */
         resetPreset: () => void;
+        /**
+         * Drop the WHOLE overlay, every preset at once.
+         *
+         * Staged like every other edit rather than written straight through: it
+         * is the most destructive control on the card, so it has to be
+         * discardable, and it has to mark the card dirty so the badge and the
+         * unload guard both say something is pending.
+         */
+        resetAll: () => void;
         /** @returns the current overrides map as an indented JSON document. */
         exportOverrides: () => string;
         /**

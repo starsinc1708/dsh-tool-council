@@ -54,6 +54,7 @@ function stubContext(overrides: Record<string, unknown> = {}) {
       },
     },
     sessions: { binding: () => undefined },
+    workspaces: { openPath: async () => {} },
     ...overrides,
   }
   return { ctx, recorded }

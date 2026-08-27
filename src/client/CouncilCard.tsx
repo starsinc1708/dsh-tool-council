@@ -33,6 +33,7 @@ export interface CouncilCardFace {
   revertRole: (layerId: string, roleId: string) => void
   setQuorum: (layerId: string, rule: QuorumRule, threshold?: number) => void
   resetPreset: () => void
+  resetAll: () => void
   exportOverrides: () => string
   importOverrides: (text: string) => boolean
   discard: () => void
@@ -119,6 +120,20 @@ export function routeSuggestions(state: CouncilCardState, field: 'model' | 'prov
 }
 
 /**
+ * Which of the three summary phrasings one overlay needs.
+ *
+ * `total` is never below `presets`, so a single override is always in a single
+ * preset — three cases cover every overlay without a plural library.
+ * @param counts - the controller's override counts.
+ * @returns the locale-key suffix.
+ * @internal
+ */
+function summaryCase(counts: CouncilCardState['overrideCounts']): 'single' | 'onePreset' | 'many' {
+  if (counts.total === 1) return 'single'
+  return counts.presets === 1 ? 'onePreset' : 'many'
+}
+
+/**
  * Render the card.
  * @param props - the runtime kit, the locale binder, and the injected face.
  * @returns the settings card element.
@@ -169,18 +184,43 @@ export function CouncilCard(props: CouncilCardProps) {
       </label>
 
       <nav className={css.tabs}>
-        {state.presets.map(candidate => (
-          <button
-            key={candidate.id}
-            type="button"
-            aria-pressed={candidate.id === state.selected}
-            className={candidate.id === state.selected ? css.tabSelected : css.tab}
-            onClick={() => { props.selectPreset(candidate.id) }}
-          >
-            {candidate.label}
-          </button>
-        ))}
+        {state.presets.map((candidate) => {
+          // The badge is the whole point of this row: without it the only way to
+          // find out what you overrode is to open all four tabs.
+          const count = state.overrideCounts.byPreset[candidate.id] ?? 0
+          return (
+            <button
+              key={candidate.id}
+              type="button"
+              aria-pressed={candidate.id === state.selected}
+              className={candidate.id === state.selected ? css.tabSelected : css.tab}
+              onClick={() => { props.selectPreset(candidate.id) }}
+            >
+              {candidate.label}
+              {count === 0 ? null : <span className={css.tabCount}>{`·${count}`}</span>}
+            </button>
+          )
+        })}
       </nav>
+
+      <div className={css.overrideRow}>
+        <span className={css.overrideSummary}>
+          {state.overrideCounts.total === 0
+            ? t('noOverrides')
+            : t(`overrideSummary.${summaryCase(state.overrideCounts)}` as CouncilKey, {
+                total: state.overrideCounts.total,
+                presets: state.overrideCounts.presets,
+              })}
+        </span>
+        <button
+          type="button"
+          className={css.resetAll}
+          disabled={disabled || state.overrideCounts.total === 0}
+          onClick={() => { props.resetAll() }}
+        >
+          {t('resetAll')}
+        </button>
+      </div>
 
       {preset === undefined ? null : (
         <div className={css.layers}>
@@ -396,7 +436,14 @@ export function CouncilCard(props: CouncilCardProps) {
       {state.error === '' ? null : <p className={css.error} role="alert">{state.error}</p>}
 
       <footer className={css.foot}>
-        <button type="button" disabled={disabled} onClick={() => { props.resetPreset() }}>
+        {/* Disabled at zero for the same reason as Reset all: resetting a
+            preset that has no overrides would mark the card dirty and offer a
+            Save that writes back the identical document. */}
+        <button
+          type="button"
+          disabled={disabled || (state.overrideCounts.byPreset[state.selected] ?? 0) === 0}
+          onClick={() => { props.resetPreset() }}
+        >
           {t('resetPreset')}
         </button>
         <span className={css.spacer} />
