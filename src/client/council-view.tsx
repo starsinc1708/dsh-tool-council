@@ -21,9 +21,12 @@ import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/clie
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: brings the `workflow-run` ChatNodeDataMap augmentation.
 import type {} from '@deepseek-ai/dsh-client-ui-workflow-run/client'
-import {
-  COUNCIL_ARTIFACT_KIND, COUNCIL_ARTIFACT_VERSION,
-} from '@starsinc1708/dsh-tool-council/types'
+// VALUE import, so it must be relative: the client bundle externalizes every
+// bare specifier, and the loader's module table answers only the shared seed
+// words. A package-subpath value import compiles fine and then fails at load
+// with "missed the module table". Type-only imports below may use the
+// specifier, because they are erased before the bundle exists.
+import { COUNCIL_ARTIFACT_KIND, COUNCIL_ARTIFACT_VERSION } from '../types.ts'
 import type {
   CouncilLayerRecord, CouncilResultRecord, CouncilSettings,
 } from '@starsinc1708/dsh-tool-council/types'

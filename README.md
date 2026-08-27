@@ -224,6 +224,13 @@ format itself. Two rules the config encodes:
   cannot answer.
 - Cross-plugin **value** imports are forbidden. Collaborate through cordis
   services and keep the rest type-only.
+- The same rule catches the package's OWN subpath. `deps: { neverBundle }`
+  externalizes every bare specifier, so a value import of
+  `@starsinc1708/dsh-tool-council/types` from `src/client` compiles, bundles,
+  and then fails at load with `require(…) missed the module table`. Import
+  values from `../types.ts` relatively so they inline; the specifier is fine
+  for `import type`, which is erased before the bundle exists.
+  `tests/bundle.spec.ts` enforces both directions.
 
 The `@deepseek-ai/dsh-*` packages are `devDependencies` on purpose. At runtime
 they resolve to the harness installation through the profile's Node parent-walk,
