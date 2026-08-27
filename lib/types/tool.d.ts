@@ -15,12 +15,12 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ToolCallView, ToolResult, ToolResultView } from '@deepseek-ai/dsh-tools';
 import type { WorkflowResult } from '@deepseek-ai/dsh-workflow';
 import type { Config } from './policy.ts';
-import type { CouncilResultRecord } from './recorder.ts';
+import type { CouncilRunNarration } from './recorder.ts';
 import type { ScriptStopReason } from './script.ts';
-import type { ClusteredFinding, Tally, VerifierBallot } from './types.ts';
+import type { ClusteredFinding, CouncilLayerRecord, CouncilResultRecord, Tally, VerifierBallot } from './types.ts';
 export type * from './types.ts';
 export type * from './settings.ts';
-export type { CouncilLayerRecord, CouncilResultRecord, CouncilResultRow, CouncilRunStart, } from './recorder.ts';
+export { COUNCIL_ARTIFACT_KIND, COUNCIL_ARTIFACT_VERSION } from './types.ts';
 export { TASK_SNIPPET_CHARS, taskSnippet } from './recorder.ts';
 export { BUILTIN_PRESETS } from './presets.ts';
 export { Config, HARD_STOP_GRACE_MS, expandLayers, resolveConfig, totalAgentBudget } from './policy.ts';
@@ -85,10 +85,14 @@ export declare function renderOutcome(outcome: CouncilOutcome, maxChars: number)
  * Flatten a settled outcome into the durable record the Council tab reopens.
  * @param outcome - the validated script outcome.
  * @param context - the preset, the engine's stop reason, and the run's timings.
- * @returns the record appended as `tool-council/result`.
+ * @returns the artifact shipped as the tool's `presentationMeta`.
  */
 export declare function buildResultRecord(outcome: CouncilOutcome, context: {
+    readonly runId: string;
     readonly preset: string;
+    readonly task: string;
+    readonly layers: readonly CouncilLayerRecord[];
+    readonly narration: CouncilRunNarration;
     readonly stopReason: string;
     readonly agentsStarted: number;
     readonly durationMs: number;
@@ -100,7 +104,11 @@ export declare function buildResultRecord(outcome: CouncilOutcome, context: {
  * @returns a record whose counts are zero and whose stop reason names the failure.
  */
 export declare function failureRecord(context: {
+    readonly runId: string;
     readonly preset: string;
+    readonly task: string;
+    readonly layers: readonly CouncilLayerRecord[];
+    readonly narration: CouncilRunNarration;
     readonly stopReason: string;
     readonly error: string;
     readonly agentsStarted: number;
@@ -112,6 +120,15 @@ interface CouncilArgs {
 }
 export declare function presentCall(args: CouncilArgs): ToolCallView;
 export declare function presentResult(args: CouncilArgs, result: ToolResult): ToolResultView;
+/**
+ * Recognize one of this plugin's run artifacts in a `tool/result` meta payload.
+ *
+ * Presenters run on REPLAY of arbitrary logged results, including ones written
+ * by another build, so the shape is checked rather than assumed.
+ * @param meta - the persisted presentation payload.
+ * @returns the artifact, or undefined when the payload is not one.
+ */
+export declare function readArtifact(meta: unknown): CouncilResultRecord | undefined;
 /**
  * Register the council tool and its usage policy.
  * @param ctx - the plugin context; `inject` guarantees the four services.

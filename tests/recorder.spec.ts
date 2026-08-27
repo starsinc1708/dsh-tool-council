@@ -1,14 +1,33 @@
 /**
- * Tests for the durable-record lifecycle against a session that refuses
- * appends. This is the only path on which the reopenable-run feature can
- * disappear silently, so it is the one that has to be driven directly: a
- * transient failure must cost the mirror it happened on, never the run's
- * outcome record, and a half-opened run must still be closable.
+ * Tests for the recorder's two jobs and the constraint that shapes both.
+ *
+ * It may append ONLY event types the harness knows. A private `tool-council/*`
+ * family — which earlier versions of this plugin wrote — makes the whole
+ * session log unreadable on the next start, because the reader validates types
+ * against `KNOWN_SESSION_EVENT_TYPES` and `Session.append()` gives an
+ * out-of-repo plugin no way to set the `ignorable` marker. The first test here
+ * therefore checks the appended vocabulary against the harness's own catalogue,
+ * not against a list written by hand.
+ *
+ * Its second job is collecting the run's narration in memory for the artifact,
+ * which must survive a session that refuses appends entirely.
  */
 
 import { describe, expect, it, vi } from 'vitest'
 import { TASK_SNIPPET_CHARS, createCouncilRecorder, taskSnippet } from '../src/recorder.ts'
-import type { CouncilResultRecord } from '../src/types.ts'
+
+/**
+ * The harness's own event catalogue.
+ *
+ * Loaded by URL rather than by specifier: the module is real and generated, but
+ * `dsh-session`'s `exports` map does not publish that subpath, so a normal
+ * import cannot resolve it. Reading the generated set is the whole point — an
+ * allowlist written by hand here would drift from the harness exactly when it
+ * matters.
+ */
+const { KNOWN_SESSION_EVENT_TYPES } = await import(
+  new URL('../node_modules/@deepseek-ai/dsh-session/lib/types/known-event-types.js', import.meta.url).href
+) as { KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> }
 
 /** One appended record. */
 interface Appended {
@@ -45,23 +64,6 @@ function fakeContext() {
 
 const RUN = { id: 'run-1', meta: { name: 'council:bug-hunt', description: 'd' } }
 
-const RESULT: CouncilResultRecord = {
-  preset: 'bug-hunt',
-  stopReason: 'completed',
-  agentsStarted: 8,
-  durationMs: 1_000,
-  membersReporting: 1,
-  membersResponding: 4,
-  mapMembers: 4,
-  reportMissing: false,
-  counts: { findings: 1, confirmed: 1, rejected: 0, notABug: 0, insufficient: 0, unverified: 0 },
-  verifiers: ['V1', 'V2'],
-  rows: [],
-  rowsTruncated: false,
-  report: 'the report',
-  reportTruncated: false,
-}
-
 function setup() {
   const { ctx, emit } = fakeContext()
   const recorder = createCouncilRecorder(ctx as never)
@@ -69,80 +71,112 @@ function setup() {
   return { recorder, session, emit }
 }
 
-describe('council recorder', () => {
-  it('opens both node families and closes with the outcome before the end marker', () => {
-    const { recorder, session, emit } = setup()
-    recorder.start(session, RUN as never, { preset: 'bug-hunt', task: 'audit src/rank.py', layers: [] })
+describe('council recorder vocabulary', () => {
+  /** Drive one whole run through the recorder. */
+  function runOnce(bench: ReturnType<typeof setup>) {
+    const { recorder, session, emit } = bench
+    recorder.start(session, RUN as never)
+    emit('workflow/agent-start', { id: 'run-1' }, { seq: 1, label: 'Correctness', phase: 'map', childId: 'session-2' })
     emit('workflow/phase', { id: 'run-1' }, 'map')
     emit('workflow/log', { id: 'run-1' }, 'map layer done')
-    recorder.finish('run-1', 'completed', RESULT)
+    emit('workflow/agent-end', { id: 'run-1' }, { seq: 1, outcome: 'completed' })
+    recorder.finish('run-1', 'completed')
+  }
 
-    expect(session.types()).toEqual([
+  it('appends only event types this harness knows', () => {
+    // The regression that made a whole session unreadable. Checked against the
+    // harness's own catalogue so a future private event type cannot slip back
+    // in behind a hand-written allowlist.
+    const bench = setup()
+    runOnce(bench)
+    expect(bench.session.appended.length).toBeGreaterThan(0)
+    const unknown = [...new Set(bench.session.types())].filter(type => !KNOWN_SESSION_EVENT_TYPES.has(type))
+    expect(unknown, 'these types would make the session log unreadable').toEqual([])
+  })
+
+  it('mirrors the workflow lifecycle and nothing of its own', () => {
+    const bench = setup()
+    runOnce(bench)
+    expect(bench.session.types()).toEqual([
       'tool-workflow/run-start',
-      'tool-council/run-start',
-      'tool-council/phase',
-      'tool-council/log',
-      // Adjacent, in this order: a reader must never see a finished verdict
-      // table above a status that still says running.
-      'tool-council/result',
+      'tool-workflow/agent-start',
+      'tool-workflow/agent-end',
       'tool-workflow/run-end',
     ])
+    // Phases and log lines are the council's own vocabulary: collected, never written.
+    expect(bench.session.types().some(type => type.startsWith('tool-council/'))).toBe(false)
   })
+})
 
-  it('still closes the council node when the workflow opener was refused', () => {
-    const { recorder, session } = setup()
-    session.refuse.add('tool-workflow/run-start')
-    recorder.start(session, RUN as never, { preset: 'bug-hunt', task: 'audit src/rank.py', layers: [] })
-    recorder.finish('run-1', 'completed', RESULT)
-
-    // Gating registration on the first opener alone left this node open for ever.
-    expect(session.types()).toContain('tool-council/run-start')
-    expect(session.types()).toContain('tool-council/result')
-  })
-
-  it('keeps the outcome after a mid-run mirror failure mutes the stream', () => {
+describe('council recorder narration', () => {
+  it('collects phase marks and log lines for the artifact', () => {
     const { recorder, session, emit } = setup()
-    recorder.start(session, RUN as never, { preset: 'bug-hunt', task: 'audit src/rank.py', layers: [] })
+    recorder.start(session, RUN as never)
+    emit('workflow/phase', { id: 'run-1' }, 'map')
+    emit('workflow/log', { id: 'run-1' }, 'map layer done')
+    emit('workflow/phase', { id: 'run-1' }, 'verify')
+    emit('workflow/log', { id: 'run-1' }, 'verify layer done')
+
+    const narration = recorder.narration('run-1')
+    expect(narration.startedAt).toBeGreaterThan(0)
+    expect(narration.phases.map(mark => mark.title)).toEqual(['map', 'verify'])
+    expect(narration.messages.map(line => line.text)).toEqual(['map layer done', 'verify layer done'])
+  })
+
+  it('collects narration even when the session refuses every append', () => {
+    // The artifact does not travel through the session log, so it must not
+    // depend on the log accepting anything.
+    const { recorder, session, emit } = setup()
+    session.refuse.add('tool-workflow/run-start')
+    recorder.start(session, RUN as never)
+    emit('workflow/log', { id: 'run-1' }, 'still collected')
+    expect(recorder.narration('run-1').messages.map(line => line.text)).toEqual(['still collected'])
+  })
+
+  it('mutes the per-agent mirror after a failure but still writes the end marker', () => {
+    const { recorder, session, emit } = setup()
+    recorder.start(session, RUN as never)
     session.refuse.add('tool-workflow/agent-start')
     emit('workflow/agent-start', { id: 'run-1' }, { seq: 1, label: 'Correctness', childId: 'session-2' })
-    // The stream is muted from here on…
-    emit('workflow/log', { id: 'run-1' }, 'this line is lost')
-    recorder.finish('run-1', 'completed', RESULT)
+    emit('workflow/agent-end', { id: 'run-1' }, { seq: 1, outcome: 'completed' })
+    recorder.finish('run-1', 'completed')
 
-    expect(session.types()).not.toContain('tool-council/log')
-    // …but the record the whole feature exists for still lands.
-    expect(session.types()).toContain('tool-council/result')
+    expect(session.types()).not.toContain('tool-workflow/agent-end')
+    // Without the end marker the run reads as `running` for ever.
     expect(session.types()).toContain('tool-workflow/run-end')
   })
 
-  it('registers nothing when the session refuses both openers', () => {
+  it('returns empty narration for a run it does not own, and after abandon', () => {
     const { recorder, session, emit } = setup()
-    session.refuse.add('tool-workflow/run-start')
-    session.refuse.add('tool-council/run-start')
-    recorder.start(session, RUN as never, { preset: 'bug-hunt', task: 'audit src/rank.py', layers: [] })
-    emit('workflow/log', { id: 'run-1' }, 'ignored')
-    recorder.finish('run-1', 'completed', RESULT)
-    expect(session.appended).toHaveLength(0)
-  })
-
-  it('closes a run with no outcome record, so a failed run does not read as running', () => {
-    const { recorder, session } = setup()
-    recorder.start(session, RUN as never, { preset: 'bug-hunt', task: 'audit src/rank.py', layers: [] })
-    recorder.finish('run-1', 'error')
-    expect(session.types()).toContain('tool-workflow/run-end')
-    expect(session.types()).not.toContain('tool-council/result')
-  })
-
-  it('is idempotent and ignores events for runs it does not own', () => {
-    const { recorder, session, emit } = setup()
-    recorder.start(session, RUN as never, { preset: 'bug-hunt', task: 'audit src/rank.py', layers: [] })
-    recorder.finish('run-1', 'completed', RESULT)
-    const after = session.appended.length
-    recorder.finish('run-1', 'completed', RESULT)
+    recorder.start(session, RUN as never)
+    emit('workflow/log', { id: 'run-1' }, 'kept for now')
+    expect(recorder.narration('other-run')).toEqual({ startedAt: 0, phases: [], messages: [] })
     recorder.abandon('run-1')
+    expect(recorder.narration('run-1')).toEqual({ startedAt: 0, phases: [], messages: [] })
+  })
+
+  it('ignores events for runs it does not own and closes at most once', () => {
+    const { recorder, session, emit } = setup()
+    recorder.start(session, RUN as never)
+    recorder.finish('run-1', 'completed')
+    recorder.abandon('run-1')
+    const after = session.appended.length
+    recorder.finish('run-1', 'completed')
     emit('workflow/log', { id: 'run-1' }, 'after the close')
     emit('workflow/log', { id: 'other-run' }, 'never seen')
     expect(session.appended).toHaveLength(after)
+  })
+
+  it('bounds what one run may accumulate', () => {
+    const { recorder, session, emit } = setup()
+    recorder.start(session, RUN as never)
+    for (let index = 0; index < 400; index += 1) {
+      emit('workflow/phase', { id: 'run-1' }, `phase-${index}`)
+      emit('workflow/log', { id: 'run-1' }, `line-${index}`)
+    }
+    const narration = recorder.narration('run-1')
+    expect(narration.phases.length).toBeLessThanOrEqual(64)
+    expect(narration.messages.length).toBeLessThanOrEqual(256)
   })
 })
 

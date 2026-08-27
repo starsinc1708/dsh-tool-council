@@ -3,11 +3,13 @@
  * agents, followed by the run's verdict table and written report, rendered as
  * a tab beside Chat and Trajectory.
  *
- * It reads two durable node families: the `workflow-run` nodes the engine
- * emits (member graph, live state, per-member tokens) and this package's own
- * `council-log` node (topology labels, narration, per-layer timing, and the
- * settled outcome). The outcome is what makes a finished run reopenable — the
- * tool result itself lives only in the parent model's context.
+ * It reads two things the harness already persists: the `workflow-run` nodes
+ * the engine emits (member graph, live state, per-member tokens) and the run
+ * ARTIFACT the council tool ships as its `presentationMeta`, which the harness
+ * stores on the `tool/result` event. That artifact — topology, narration,
+ * per-layer timing and the settled outcome — is what makes a finished run
+ * reopenable, and it costs no private event type: a plugin cannot write one,
+ * because the session reader refuses a log carrying a type it does not know.
  *
  * @module @deepseek-ai/dsh-client-ui-council
  */
@@ -19,10 +21,12 @@ import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/clie
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: brings the `workflow-run` ChatNodeDataMap augmentation.
 import type {} from '@deepseek-ai/dsh-client-ui-workflow-run/client'
+import {
+  COUNCIL_ARTIFACT_KIND, COUNCIL_ARTIFACT_VERSION,
+} from '@starsinc1708/dsh-tool-council/types'
 import type {
   CouncilLayerRecord, CouncilResultRecord, CouncilSettings,
 } from '@starsinc1708/dsh-tool-council/types'
-import type { CouncilLogData } from './council-log-definition.ts'
 import type { CouncilKey } from './locales.ts'
 import { NS } from './locales.ts'
 import css from './council-view.module.css'
@@ -265,12 +269,55 @@ export function registerCouncilView(ctx: ClientContext, scope: SettingsScope<Cou
   }, CouncilView))
 }
 
-/** One workflow-run node paired with this package's own record of the run. */
+/**
+ * One tool call in the client's chat tree.
+ *
+ * Restated structurally rather than imported: `ToolCallBlock` lives behind a
+ * subpath the runtime's `exports` map does not publish, and a value import
+ * across client plugins fails the bundle-purity gate either way.
+ */
+interface ToolBlock {
+  readonly kind: string
+  readonly meta?: unknown
+  readonly subCalls?: readonly ToolBlock[]
+}
+
+/**
+ * Collect this plugin's run artifacts from the settled tool results in a chat.
+ *
+ * The artifact rides `tool/result`'s `meta`, which the harness persists for
+ * exactly this purpose — so a finished run reopens from the session log without
+ * the plugin writing a single record of its own.
+ * @param block - one tool call block, possibly with sub-calls.
+ * @param into - accumulator keyed by run id.
+ */
+function collectArtifacts(block: ToolBlock | undefined, into: Map<string, CouncilResultRecord>): void {
+  if (block === undefined) return
+  const meta = block.meta
+  if (isArtifact(meta)) into.set(meta.runId, meta)
+  for (const child of block.subCalls ?? []) collectArtifacts(child, into)
+}
+
+/**
+ * Recognize a council artifact in a persisted `meta` payload.
+ * @param meta - the tool result's presentation payload.
+ * @returns whether it is an artifact this build can read.
+ */
+function isArtifact(meta: unknown): meta is CouncilResultRecord {
+  if (typeof meta !== 'object' || meta === null) return false
+  const candidate = meta as Partial<CouncilResultRecord>
+  return candidate.kind === COUNCIL_ARTIFACT_KIND
+    && candidate.version === COUNCIL_ARTIFACT_VERSION
+    && typeof candidate.runId === 'string'
+    && Array.isArray(candidate.rows)
+}
+
+/** One workflow-run node paired with the artifact its tool result carried. */
 interface CouncilRun {
   readonly key: string
   readonly id: string
   readonly data: RunData
-  log: CouncilLogData | null
+  artifact: CouncilResultRecord | null
 }
 
 type Translate = (key: CouncilKey, args?: Record<string, unknown>) => string
@@ -291,16 +338,16 @@ function CouncilView(
     return <div className={css.empty}>{t('onlyCouncilPreset', { preset: councilPreset })}</div>
   }
 
-  const logs = new Map<string, CouncilLogData>()
+  const artifacts = new Map<string, CouncilResultRecord>()
   const runs: CouncilRun[] = []
   for (const node of chat.nodes.values()) {
     if (node.kind === 'workflow-run') {
-      runs.push({ key: node.key, id: node.id, data: node.data as unknown as RunData, log: null })
-    } else if (node.kind === 'council-log') {
-      logs.set(node.id, node.data as unknown as CouncilLogData)
+      runs.push({ key: node.key, id: node.id, data: node.data as unknown as RunData, artifact: null })
+    } else if (node.kind === 'tool') {
+      collectArtifacts((node.data as unknown as { root?: ToolBlock }).root, artifacts)
     }
   }
-  for (const run of runs) run.log = logs.get(run.id) ?? null
+  for (const run of runs) run.artifact = artifacts.get(run.id) ?? null
   if (runs.length === 0) return <div className={css.empty}>{t('noRuns')}</div>
 
   return (
@@ -335,10 +382,13 @@ interface RunProps {
 
 function Run({ run, defaultOpen, costRate, t, useMemberUsage, useLayerTokens }: RunProps) {
   const [open, setOpen] = useState(defaultOpen)
-  const log = run.log
-  const result = log?.result ?? null
-  const layers = new Map((log?.layers ?? []).map(layer => [layer.id, layer] as const))
-  const endedAt = log !== null && result !== null ? log.startedAt + result.durationMs : 0
+  // One object now: the artifact carries the topology, the narration and the
+  // outcome together, and it exists only once the run's tool result has landed.
+  // A live run therefore shows its member graph and nothing else — the graph is
+  // the live signal, and the rest arrives when the run settles.
+  const result = run.artifact
+  const layers = new Map((result?.layers ?? []).map(layer => [layer.id, layer] as const))
+  const endedAt = result === null ? 0 : result.startedAt + result.durationMs
 
   return (
     <details
@@ -351,7 +401,7 @@ function Run({ run, defaultOpen, costRate, t, useMemberUsage, useLayerTokens }: 
         {/* Two runs of the same preset are otherwise indistinguishable in a
             collapsed list — the task snippet and the clock are what tell them
             apart, and both are already durable. */}
-        {log === null || log.task === '' ? null : <span className={css.runTask}>{log.task}</span>}
+        {result === null || result.task === '' ? null : <span className={css.runTask}>{result.task}</span>}
         <span className={css.runStatus}>{t(`status.${run.data.status}` as CouncilKey)}</span>
         {/* A budgeted or failed run must say so while collapsed; the warnings
             inside the body are invisible until it is opened. */}
@@ -359,8 +409,8 @@ function Run({ run, defaultOpen, costRate, t, useMemberUsage, useLayerTokens }: 
           ? <span className={css.chipWarn}>{t('chip.deadline')}</span>
           : null}
         {result?.error === undefined ? null : <span className={css.chipDanger}>{t('chip.failed')}</span>}
-        {log === null || log.startedAt === 0 ? null : (
-          <span className={css.runMeta}>{t('startedAt', { time: formatTime(log.startedAt) })}</span>
+        {result === null || result.startedAt === 0 ? null : (
+          <span className={css.runMeta}>{t('startedAt', { time: formatTime(result.startedAt) })}</span>
         )}
         {result === null ? null : (
           <span className={css.runMeta}>{t('seconds', { n: Math.round(result.durationMs / 1000) })}</span>
@@ -391,7 +441,7 @@ function Run({ run, defaultOpen, costRate, t, useMemberUsage, useLayerTokens }: 
             key={phase.key}
             phase={phase}
             layer={phase.phase === null ? undefined : layers.get(phase.phase)}
-            durationMs={phaseDuration(log, phase.phase, endedAt)}
+            durationMs={phaseDuration(result, phase.phase, endedAt)}
             costRate={costRate}
             t={t}
             useMemberUsage={useMemberUsage}
@@ -400,9 +450,9 @@ function Run({ run, defaultOpen, costRate, t, useMemberUsage, useLayerTokens }: 
         ))}
       </div>
 
-      {log === null || log.messages.length === 0 ? null : (
+      {result === null || result.messages.length === 0 ? null : (
         <ul className={css.runLog}>
-          {log.messages.map((line, index) => <li key={index}>{line.text}</li>)}
+          {result.messages.map((line, index) => <li key={index}>{line.text}</li>)}
         </ul>
       )}
 
@@ -420,17 +470,17 @@ function Run({ run, defaultOpen, costRate, t, useMemberUsage, useLayerTokens }: 
  * agents at all (a verify layer with nothing to verify), which leaves a phase
  * mark with no matching group in the workflow-run node and would shift every
  * later duration by one.
- * @param log - the council record carrying the phase marks, when present.
+ * @param artifact - the run's artifact, when it has settled.
  * @param title - the phase's title, which is the layer id.
  * @param endedAt - when the run settled, for the last phase.
  * @returns the duration in milliseconds, or 0 when it cannot be established.
  */
-function phaseDuration(log: CouncilLogData | null, title: string | null, endedAt: number): number {
-  if (log === null || title === null) return 0
-  const index = log.phases.findIndex(mark => mark.title === title)
-  const mark = log.phases[index]
+function phaseDuration(artifact: CouncilResultRecord | null, title: string | null, endedAt: number): number {
+  if (artifact === null || title === null) return 0
+  const index = artifact.phases.findIndex(mark => mark.title === title)
+  const mark = artifact.phases[index]
   if (mark === undefined || mark.at === 0) return 0
-  const next = log.phases[index + 1]?.at ?? endedAt
+  const next = artifact.phases[index + 1]?.at ?? endedAt
   return next > mark.at ? next - mark.at : 0
 }
 

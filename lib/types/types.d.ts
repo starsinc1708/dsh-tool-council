@@ -176,12 +176,47 @@ export interface CouncilResultRow {
     readonly outcome: Outcome | 'unverified';
     readonly fix: string;
 }
+/** One narration line with the wall clock it was emitted at. */
+export interface CouncilLogLine {
+    readonly text: string;
+    readonly at: number;
+}
+/** One phase transition with the wall clock it happened at. */
+export interface CouncilPhaseMark {
+    readonly title: string;
+    readonly at: number;
+}
+/** What the recorder collects in memory while a run is going. */
+export interface CouncilRunNarration {
+    readonly startedAt: number;
+    readonly phases: readonly CouncilPhaseMark[];
+    readonly messages: readonly CouncilLogLine[];
+}
+/** Marks a `tool/result` meta payload as one of this plugin's run artifacts. */
+export declare const COUNCIL_ARTIFACT_KIND = "council-run";
+/** Artifact schema version, so a client can refuse a shape it cannot read. */
+export declare const COUNCIL_ARTIFACT_VERSION = 1;
 /**
- * Everything a settled council run leaves behind, durable in the parent
- * session. This is what makes a run a reopenable artifact rather than a tool
- * result that vanishes with the model's context.
+ * Everything a settled council run leaves behind.
+ *
+ * This travels as the tool's `presentationMeta`, which the harness persists on
+ * the `tool/result` event it writes anyway — the one durable channel available
+ * to an out-of-repo plugin. A private session event family would make the whole
+ * log unreadable, because the reader validates types against
+ * `KNOWN_SESSION_EVENT_TYPES` and `append()` exposes no `ignorable` marker.
  */
 export interface CouncilResultRecord {
+    /** Discriminator: `council-run`. Lets a reader recognize the payload in `meta`. */
+    readonly kind: typeof COUNCIL_ARTIFACT_KIND;
+    readonly version: number;
+    /** The workflow run this artifact belongs to; joins it to the member graph. */
+    readonly runId: string;
+    /** Truncated task, so two runs of the same preset are distinguishable. */
+    readonly task: string;
+    readonly startedAt: number;
+    readonly layers: readonly CouncilLayerRecord[];
+    readonly phases: readonly CouncilPhaseMark[];
+    readonly messages: readonly CouncilLogLine[];
     readonly preset: string;
     /** The workflow engine's stop reason, or `deadline` when the script bowed out. */
     readonly stopReason: string;

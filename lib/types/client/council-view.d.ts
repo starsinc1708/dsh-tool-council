@@ -3,11 +3,13 @@
  * agents, followed by the run's verdict table and written report, rendered as
  * a tab beside Chat and Trajectory.
  *
- * It reads two durable node families: the `workflow-run` nodes the engine
- * emits (member graph, live state, per-member tokens) and this package's own
- * `council-log` node (topology labels, narration, per-layer timing, and the
- * settled outcome). The outcome is what makes a finished run reopenable — the
- * tool result itself lives only in the parent model's context.
+ * It reads two things the harness already persists: the `workflow-run` nodes
+ * the engine emits (member graph, live state, per-member tokens) and the run
+ * ARTIFACT the council tool ships as its `presentationMeta`, which the harness
+ * stores on the `tool/result` event. That artifact — topology, narration,
+ * per-layer timing and the settled outcome — is what makes a finished run
+ * reopenable, and it costs no private event type: a plugin cannot write one,
+ * because the session reader refuses a log carrying a type it does not know.
  *
  * @module @deepseek-ai/dsh-client-ui-council
  */

@@ -173,7 +173,23 @@ The card stages edits locally and lands them in one save, marks itself `unsaved 
 
 The Council conversation view renders each run as a graph of its layers and members — live status, per-member and per-layer tokens, per-layer duration, and a one-line role explanation — followed by the run's **verdict table and written report**, with Markdown and JSON export. Each run's header carries its task snippet, start time, and an over-budget or failed chip, so a collapsed list of runs is still readable. Only the newest run is expanded; older ones collapse, which is also what stops a finished run from holding live token subscriptions open for the rest of the session. Long verdict tables draw their first 50 rows with the rest one click away. Both exports are offered as a clipboard copy and as a file download, because clipboard access is permissioned and silently unavailable in some webviews.
 
-That last part is durable. The tool result lives in the parent model's context and disappears with it, so the tool also appends a `tool-council/result` record (bounded counts, verdict rows, and the report) to the parent session alongside `tool-council/run-start`, `/phase`, and `/log`. A finished run therefore reopens with its table intact from a fresh client session, which is the difference between a fan-out that returned some text and an audit you can go back to.
+That last part is durable, and it travels through the one channel a plugin actually has. The run's artifact — topology, narration, per-layer timing, verdict rows and the report — is the tool's `presentationMeta`, which the harness persists on the `tool/result` event it writes anyway; the tab reads it back from there. A finished run therefore reopens with its table intact from a fresh client session.
+
+**The plugin writes no private event types, and must not.** The session reader validates every record against the harness's `KNOWN_SESSION_EVENT_TYPES` and refuses to interpret a log containing an unknown type that is not marked `ignorable` — and `Session.append()` gives an out-of-repo plugin no way to set that marker (`dsh-session` says so: *"a registration surface for them is deferred until such a consumer exists"*). Versions up to 0.1.1-rc.2 appended a `tool-council/*` family and so made their own session logs unreadable on the next start:
+
+```
+SessionFormatUnsupportedError: session "…" contains event type "tool-council/run-start"
+(seq …) unknown to this harness and not marked ignorable; refusing to interpret the log
+```
+
+If you hit that, repair the affected logs in place — it only adds the `ignorable` marker to those records, and keeps the original as `*.bak`:
+
+```sh
+node scripts/repair-council-sessions.mjs           # scan and report
+node scripts/repair-council-sessions.mjs --write   # repair
+```
+
+Only `tool-workflow/*` records are appended now, and `tests/recorder.spec.ts` checks the appended vocabulary against the harness's own catalogue rather than a hand-written allowlist.
 
 ## Model Experience
 

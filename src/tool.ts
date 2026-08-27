@@ -23,20 +23,22 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 
 import { HARD_STOP_GRACE_MS, expandLayers, resolveConfig, totalAgentBudget } from './policy.ts'
 import type { Config, ResolvedConfig } from './policy.ts'
-import { createCouncilRecorder } from './recorder.ts'
-import type { CouncilLayerRecord, CouncilResultRecord, CouncilResultRow } from './recorder.ts'
+import { createCouncilRecorder, taskSnippet } from './recorder.ts'
+import type { CouncilRunNarration } from './recorder.ts'
 import { COUNCIL_NAMESPACE, applyOverrides } from './settings.ts'
 import type { CouncilSettings } from './settings.ts'
 import { COUNCIL_SCRIPT } from './script.ts'
 import type { ScriptArgs, ScriptStopReason } from './script.ts'
 import { TABLE_LEGEND, assertClustersWellFormed, assertTallyAgrees, renderTable, tally } from './tally.ts'
-import type { ClusteredFinding, PresetConfig, Tally, VerifierBallot } from './types.ts'
+import { COUNCIL_ARTIFACT_KIND, COUNCIL_ARTIFACT_VERSION } from './types.ts'
+import type {
+  ClusteredFinding, CouncilLayerRecord, CouncilResultRecord, CouncilResultRow, PresetConfig, Tally,
+  VerifierBallot,
+} from './types.ts'
 
 export type * from './types.ts'
 export type * from './settings.ts'
-export type {
-  CouncilLayerRecord, CouncilResultRecord, CouncilResultRow, CouncilRunStart,
-} from './recorder.ts'
+export { COUNCIL_ARTIFACT_KIND, COUNCIL_ARTIFACT_VERSION } from './types.ts'
 export { TASK_SNIPPET_CHARS, taskSnippet } from './recorder.ts'
 export { BUILTIN_PRESETS } from './presets.ts'
 export { Config, HARD_STOP_GRACE_MS, expandLayers, resolveConfig, totalAgentBudget } from './policy.ts'
@@ -263,12 +265,16 @@ const MAX_RENDERED_ROWS = 100
  * Flatten a settled outcome into the durable record the Council tab reopens.
  * @param outcome - the validated script outcome.
  * @param context - the preset, the engine's stop reason, and the run's timings.
- * @returns the record appended as `tool-council/result`.
+ * @returns the artifact shipped as the tool's `presentationMeta`.
  */
 export function buildResultRecord(
   outcome: CouncilOutcome,
   context: {
+    readonly runId: string
     readonly preset: string
+    readonly task: string
+    readonly layers: readonly CouncilLayerRecord[]
+    readonly narration: CouncilRunNarration
     readonly stopReason: string
     readonly agentsStarted: number
     readonly durationMs: number
@@ -305,6 +311,14 @@ export function buildResultRecord(
   })
   const report = bound(outcome.report, context.maxReportChars)
   return {
+    kind: COUNCIL_ARTIFACT_KIND,
+    version: COUNCIL_ARTIFACT_VERSION,
+    runId: context.runId,
+    task: taskSnippet(context.task),
+    startedAt: context.narration.startedAt,
+    layers: context.layers,
+    phases: context.narration.phases,
+    messages: context.narration.messages,
     preset: context.preset,
     stopReason: outcome.stopReason === 'deadline' ? 'deadline' : context.stopReason,
     agentsStarted: context.agentsStarted,
@@ -328,13 +342,25 @@ export function buildResultRecord(
  * @returns a record whose counts are zero and whose stop reason names the failure.
  */
 export function failureRecord(context: {
+  readonly runId: string
   readonly preset: string
+  readonly task: string
+  readonly layers: readonly CouncilLayerRecord[]
+  readonly narration: CouncilRunNarration
   readonly stopReason: string
   readonly error: string
   readonly agentsStarted: number
   readonly durationMs: number
 }): CouncilResultRecord {
   return {
+    kind: COUNCIL_ARTIFACT_KIND,
+    version: COUNCIL_ARTIFACT_VERSION,
+    runId: context.runId,
+    task: taskSnippet(context.task),
+    startedAt: context.narration.startedAt,
+    layers: context.layers,
+    phases: context.narration.phases,
+    messages: context.narration.messages,
     preset: context.preset,
     stopReason: context.stopReason,
     error: context.error,
@@ -360,26 +386,18 @@ const OUTPUT_PROPERTIES = {
   stopReason: { type: 'string', required: true },
   durationMs: { type: 'integer', required: true },
   result: { type: 'json', required: true },
+  /**
+   * The run's durable artifact. It leaves through `presentationMeta`, which the
+   * harness persists on the `tool/result` event — the only durable channel an
+   * out-of-repo plugin has, since a private session event family would make the
+   * whole log unreadable.
+   */
+  artifact: { type: 'json', required: true },
 } as const
 
 interface CouncilArgs {
   task: string
   preset?: string
-}
-
-/** What `presentResult` reads back off the durable `tool/result` record. */
-interface CouncilPresentationMeta {
-  readonly runId: string
-  readonly preset: string
-  readonly agentsStarted: number
-  readonly stopReason: string
-  readonly durationMs: number
-  readonly findings: number
-  readonly confirmed: number
-  readonly membersReporting: number
-  readonly membersResponding: number
-  readonly mapMembers: number
-  readonly reportMissing: boolean
 }
 
 export function presentCall(args: CouncilArgs): ToolCallView {
@@ -394,18 +412,32 @@ export function presentCall(args: CouncilArgs): ToolCallView {
 }
 
 export function presentResult(args: CouncilArgs, result: ToolResult): ToolResultView {
-  const meta = result.meta as unknown
-  if (!isRecord(meta) || typeof meta['preset'] !== 'string') {
-    return { card: 'generic', title: `council: ${args.preset ?? 'default preset'}` }
-  }
-  const view = meta as unknown as CouncilPresentationMeta
-  const parts = [`${view.membersResponding}/${view.mapMembers} answered`, `${view.findings} findings`]
-  if (view.findings > 0) parts.push(`${view.confirmed} confirmed`)
+  const view = readArtifact(result.meta)
+  if (view === undefined) return { card: 'generic', title: `council: ${args.preset ?? 'default preset'}` }
+  const parts = [`${view.membersResponding}/${view.mapMembers} answered`, `${view.counts.findings} findings`]
+  if (view.counts.findings > 0) parts.push(`${view.counts.confirmed} confirmed`)
   parts.push(`${view.agentsStarted} agents`)
   if (view.durationMs > 0) parts.push(`${Math.round(view.durationMs / 1000)}s`)
   if (view.stopReason !== 'completed') parts.push(view.stopReason)
   if (view.reportMissing) parts.push('no report')
   return { card: 'generic', title: `council: ${view.preset} — ${parts.join(' · ')}` }
+}
+
+/**
+ * Recognize one of this plugin's run artifacts in a `tool/result` meta payload.
+ *
+ * Presenters run on REPLAY of arbitrary logged results, including ones written
+ * by another build, so the shape is checked rather than assumed.
+ * @param meta - the persisted presentation payload.
+ * @returns the artifact, or undefined when the payload is not one.
+ */
+export function readArtifact(meta: unknown): CouncilResultRecord | undefined {
+  if (!isRecord(meta)) return undefined
+  if (meta['kind'] !== COUNCIL_ARTIFACT_KIND) return undefined
+  if (meta['version'] !== COUNCIL_ARTIFACT_VERSION) return undefined
+  if (typeof meta['preset'] !== 'string' || typeof meta['runId'] !== 'string') return undefined
+  if (!isRecord(meta['counts']) || !Array.isArray(meta['rows'])) return undefined
+  return meta as unknown as CouncilResultRecord
 }
 
 /**
@@ -500,25 +532,10 @@ export function apply(ctx: Context, config: Config): void {
         type: 'text',
         text: renderOutcome(value.result as unknown as CouncilOutcome, composed.maxReportChars),
       }],
-      presentationMeta: (_args, value) => {
-        const outcome = value.result as unknown as CouncilOutcome
-        const meta: CouncilPresentationMeta = {
-          runId: value.runId,
-          preset: value.preset,
-          agentsStarted: value.agentsStarted,
-          stopReason: value.stopReason,
-          durationMs: value.durationMs,
-          findings: outcome.findings.length,
-          confirmed: outcome.tally === null
-            ? 0
-            : outcome.tally.rows.filter(row => row.outcome === 'confirmed').length,
-          membersReporting: outcome.membersReporting,
-          membersResponding: outcome.membersResponding,
-          mapMembers: outcome.mapMembers,
-          reportMissing: outcome.reportMissing,
-        }
-        return meta as unknown as JsonValue
-      },
+      // The artifact IS the presentation payload: the harness persists it on the
+      // `tool/result` event, which is what lets the Council tab reopen a
+      // finished run from a fresh client session.
+      presentationMeta: (_args, value) => value.artifact,
     },
     isConcurrencySafe: () => true,
     async execute(args, exec) {
@@ -569,7 +586,7 @@ export function apply(ctx: Context, config: Config): void {
         parent,
         signal: exec.signal,
       })
-      recorder.start(parent.session, run, { preset: preset.id, task, layers: layerRecords(preset) })
+      recorder.start(parent.session, run)
       const onAbort = (): void => { run.cancel('parent step aborted') }
       exec.signal.addEventListener('abort', onAbort, { once: true })
       if (exec.signal.aborted) run.cancel('parent step aborted')
@@ -603,7 +620,11 @@ export function apply(ctx: Context, config: Config): void {
           assertTallyAgrees(tally(outcome.findings, outcome.ballots, quorum), outcome.tally)
         }
         record = buildResultRecord(outcome, {
+          runId: run.id,
           preset: preset.id,
+          task,
+          layers: layerRecords(preset),
+          narration: recorder.narration(run.id),
           stopReason: settled.stopReason,
           agentsStarted: settled.agentsStarted,
           durationMs: Date.now() - startedAt,
@@ -616,10 +637,18 @@ export function apply(ctx: Context, config: Config): void {
           stopReason: record.stopReason,
           durationMs: record.durationMs,
           result: outcome as unknown as JsonValue,
+          artifact: record as unknown as JsonValue,
         }
       } catch (error: unknown) {
+        // The failure artifact never reaches a `tool/result` meta — an errored
+        // call has no output value — but it keeps the shape one place and gives
+        // the log line below something honest to say.
         record = failureRecord({
+          runId: run.id,
           preset: preset.id,
+          task,
+          layers: layerRecords(preset),
+          narration: recorder.narration(run.id),
           stopReason: settled?.stopReason ?? 'error',
           error: error instanceof Error ? error.message : String(error),
           agentsStarted: settled?.agentsStarted ?? 0,
@@ -636,7 +665,7 @@ export function apply(ctx: Context, config: Config): void {
           // dispose used to skip it and leave the run reading `running` for ever.
           await run.dispose()
         } finally {
-          recorder.finish(run.id, settled?.stopReason ?? 'error', record)
+          recorder.finish(run.id, settled?.stopReason ?? 'error')
           recorder.abandon(run.id)
         }
       }

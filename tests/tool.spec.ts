@@ -8,8 +8,8 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  buildResultRecord, failureRecord, presentCall, presentResult, readOutcome, renderOutcome,
-  stopReasonError, summaryLine,
+  buildResultRecord, failureRecord, presentCall, presentResult, readArtifact, readOutcome,
+  renderOutcome, stopReasonError, summaryLine,
 } from '../src/tool.ts'
 import { dedupeFindings, tally } from '../src/tally.ts'
 import type { ClusteredFinding, Finding, Tally, VerifierBallot } from '../src/types.ts'
@@ -63,6 +63,19 @@ const ballots: VerifierBallot[] = [
   { verifier: 'V1', verdicts: [{ findingId: 'f1', vote: 'confirmed', reason: 'read it' }] },
   { verifier: 'V2', verdicts: [{ findingId: 'f1', vote: 'confirmed', reason: 'read it too' }] },
 ]
+
+/** The run context the record builders need, shared by every case below. */
+const context = {
+  runId: 'run-1',
+  preset: 'bug-hunt',
+  task: 'audit src/rank.py',
+  layers: [{ id: 'map', kind: 'map' as const, label: 'map', width: 4 }],
+  narration: { startedAt: 1_000, phases: [{ title: 'map', at: 1_100 }], messages: [] },
+  stopReason: 'completed',
+  agentsStarted: 8,
+  durationMs: 12_000,
+  maxReportChars: 32_768,
+}
 
 describe('summaryLine', () => {
   it('does not read four healthy members that found nothing as four dead ones', () => {
@@ -145,10 +158,6 @@ describe('renderOutcome', () => {
 })
 
 describe('buildResultRecord', () => {
-  const context = {
-    preset: 'bug-hunt', stopReason: 'completed', agentsStarted: 8, durationMs: 12_000, maxReportChars: 32_768,
-  }
-
   it('counts a finding nobody was asked about as unverified, not insufficient', () => {
     const record = buildResultRecord(outcome({ findings: clustered, report: 'r' }), context)
     expect(record.counts.unverified).toBe(2)
@@ -193,18 +202,28 @@ describe('call and result cards', () => {
     expect(presentCall({ task: 'x' }).title).toBe('council: default preset — x')
   })
 
-  it('summarizes the completed call from the durable presentation metadata', () => {
+  it('summarizes the completed call from the persisted artifact', () => {
+    const artifact = buildResultRecord(
+      outcome({ findings: clustered, membersReporting: 2, stopReason: 'deadline', reportMissing: true }),
+      { ...context, stopReason: 'completed', durationMs: 12_400 },
+    )
     const view = presentResult({ task: 'x', preset: 'bug-hunt' }, {
-      content: [],
-      isError: false,
-      meta: {
-        runId: 'r', preset: 'bug-hunt', agentsStarted: 8, stopReason: 'deadline', durationMs: 12_400,
-        findings: 5, confirmed: 2, membersReporting: 3, membersResponding: 4, mapMembers: 4,
-        reportMissing: true,
-      },
+      content: [], isError: false, meta: artifact as never,
     })
     expect(view.title)
-      .toBe('council: bug-hunt — 4/4 answered · 5 findings · 2 confirmed · 8 agents · 12s · deadline · no report')
+      .toBe('council: bug-hunt — 4/4 answered · 2 findings · 0 confirmed · 8 agents · 12s · deadline · no report')
+  })
+
+  it('recognizes an artifact only when kind and version both match', () => {
+    // Presenters replay arbitrary logged results, including ones another build
+    // wrote: an unrecognized payload must degrade, never throw or half-read.
+    const artifact = buildResultRecord(outcome(), context)
+    expect(readArtifact(artifact)).toBe(artifact)
+    expect(readArtifact({ ...artifact, kind: 'something-else' })).toBeUndefined()
+    expect(readArtifact({ ...artifact, version: 99 })).toBeUndefined()
+    expect(readArtifact({ ...artifact, rows: 'not an array' })).toBeUndefined()
+    expect(readArtifact(undefined)).toBeUndefined()
+    expect(readArtifact('a string')).toBeUndefined()
   })
 
   it('falls back to a bare title when the metadata is absent or foreign', () => {
@@ -276,7 +295,15 @@ describe('stopReasonError', () => {
 describe('failureRecord', () => {
   it('closes a run that produced nothing, carrying the failure into the tab', () => {
     const record = failureRecord({
-      preset: 'bug-hunt', stopReason: 'error', error: 'worker died', agentsStarted: 5, durationMs: 900,
+      runId: 'run-1',
+      preset: 'bug-hunt',
+      task: 'audit src/rank.py',
+      layers: [],
+      narration: { startedAt: 1_000, phases: [], messages: [] },
+      stopReason: 'error',
+      error: 'worker died',
+      agentsStarted: 5,
+      durationMs: 900,
     })
     expect(record).toMatchObject({
       preset: 'bug-hunt', stopReason: 'error', error: 'worker died', agentsStarted: 5, durationMs: 900,

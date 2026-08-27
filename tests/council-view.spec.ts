@@ -35,6 +35,14 @@ function row(overrides: Partial<CouncilResultRow> = {}): CouncilResultRow {
 
 function record(overrides: Partial<CouncilResultRecord> = {}): CouncilResultRecord {
   return {
+    kind: 'council-run',
+    version: 1,
+    runId: 'run-1',
+    task: 'audit src/rank.py',
+    startedAt: 1_000,
+    layers: [],
+    phases: [],
+    messages: [],
     preset: 'bug-hunt',
     stopReason: 'completed',
     agentsStarted: 8,

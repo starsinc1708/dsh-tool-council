@@ -1,14 +1,22 @@
 /**
- * Projects the council's workflow run into its parent Session as durable
- * records: `tool-workflow/*` (so the existing workflow-run conversation node
- * renders the member graph) plus a `tool-council/*` family of its own — the run
- * header with the topology, one record per phase transition, one per narration
- * line, and the run's OUTCOME.
+ * Projects the council's workflow run into its parent Session, and collects the
+ * run's narration for the durable artifact.
  *
- * The outcome record is what makes a run an artifact instead of a tool result:
- * without it the verdict table and the report live only in the parent's
- * `tool/result` block and cannot be reopened, exported, or read from a fresh
- * client session.
+ * ONLY `tool-workflow/*` records are appended, and that is a hard constraint,
+ * not a style choice. The harness validates a session log against
+ * `KNOWN_SESSION_EVENT_TYPES`, and `Session.append()` gives an out-of-repo
+ * plugin no way to set the envelope's `ignorable` marker — so a private event
+ * family makes the whole log unreadable on the next start:
+ *
+ *   SessionFormatUnsupportedError: … contains event type "tool-council/…"
+ *   unknown to this harness and not marked ignorable; refusing to interpret
+ *   the log
+ *
+ * Earlier versions of this plugin did exactly that. The run's own artifact now
+ * travels through the supported channel instead — the tool's `presentationMeta`,
+ * which the harness persists on the `tool/result` event it already writes — and
+ * the phase and log marks the artifact needs are held in memory here for the
+ * lifetime of the run rather than written as records of their own.
  *
  * The `tool-workflow` package's own recorder only tracks runs started by the
  * model-facing `workflow` tool; the council starts its run directly through
@@ -21,43 +29,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkflowAgentEndInfo, WorkflowAgentInfo, WorkflowRunInfo, WorkflowRun } from '@deepseek-ai/dsh-workflow'
 
-// The record shapes live in the browser-safe vocabulary: the Client folds them
-// out of the session log, so they must be reachable without a host import.
-import type { CouncilLayerRecord, CouncilResultRecord } from './types.ts'
+import type { CouncilLogLine, CouncilPhaseMark, CouncilRunNarration } from './types.ts'
 
-export type { CouncilLayerRecord, CouncilResultRecord, CouncilResultRow } from './types.ts'
-
-declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    /** Opens one council run's record: its identity and the topology it runs. */
-    'tool-council/run-start': {
-      readonly runId: string
-      readonly name: string
-      readonly preset: string
-      /** First line of the task, truncated — what tells two runs apart. */
-      readonly task: string
-      readonly startedAt: number
-      readonly layers: readonly CouncilLayerRecord[]
-    }
-    /** The script entered a layer. Carries the wall clock for per-layer timing. */
-    'tool-council/phase': {
-      readonly runId: string
-      readonly title: string
-      readonly at: number
-    }
-    /** One narration line from a council run (intermediate findings counts). */
-    'tool-council/log': {
-      readonly runId: string
-      readonly message: string
-      readonly at: number
-    }
-    /** The run's durable outcome: the verdict table and the written report. */
-    'tool-council/result': {
-      readonly runId: string
-      readonly result: CouncilResultRecord
-    }
-  }
-}
+export type {
+  CouncilLayerRecord, CouncilLogLine, CouncilPhaseMark, CouncilResultRecord, CouncilResultRow,
+  CouncilRunNarration,
+} from './types.ts'
 
 /** The appendable face of a Session the recorder needs. */
 interface SessionLike {
@@ -66,60 +43,61 @@ interface SessionLike {
   append(type: string, data: any): void
 }
 
-/** What the tool hands the recorder when a run opens. */
-export interface CouncilRunStart {
-  readonly preset: string
-  /**
-   * The task, for the run header. Truncated by {@link TASK_SNIPPET_CHARS}: the
-   * parent's own message is safe to echo back to it, but the whole prompt does
-   * not belong in a list row — and the session log should not carry it twice.
-   */
-  readonly task: string
-  readonly layers: readonly CouncilLayerRecord[]
-}
-
 /** How much of the task the run header keeps. */
 export const TASK_SNIPPET_CHARS = 80
 
 /**
- * Reduce a task to one short single-line snippet.
+ * Reduce a task to one short single-line snippet for the run header.
  * @param task - the model-supplied task text.
- * @returns the first line, collapsed and truncated, or `''`.
+ * @returns the collapsed, truncated first line, or `''`.
  */
 export function taskSnippet(task: string): string {
-  // Total by construction: this runs OUTSIDE the guarded `append`, so a throw
-  // here would fail the council call itself over a display string.
+  // Total by construction: a throw here would fail the council call itself over
+  // a display string.
   const line = typeof task === 'string' ? task.replace(/\s+/gu, ' ').trim() : ''
   return line.length <= TASK_SNIPPET_CHARS ? line : `${line.slice(0, TASK_SNIPPET_CHARS - 1)}…`
 }
 
 /** Lifecycle handle the tool calls from its execute. */
 export interface CouncilRecorder {
-  start(session: SessionLike, run: WorkflowRun, info: CouncilRunStart): void
+  /** Begin mirroring one run and collecting its narration. */
+  start(session: SessionLike, run: WorkflowRun): void
   /**
-   * Close the run: append its outcome and then its end marker, adjacently, so
-   * no reader ever sees a finished verdict table above a `running` status.
-   * Idempotent — a second call for the same run does nothing.
+   * The narration collected for one run so far.
+   * @param runId - the run's id.
+   * @returns its start time, phase marks, and log lines; empty for an unknown run.
    */
-  finish(runId: string, stopReason: string, result?: CouncilResultRecord): void
+  narration(runId: string): CouncilRunNarration
+  /** Append the run's end marker. Idempotent. */
+  finish(runId: string, stopReason: string): void
+  /** Release the run's collected narration. */
   abandon(runId: string): void
 }
 
 /** One live run's recording state. */
 interface RunRecord {
   readonly session: SessionLike
+  readonly startedAt: number
+  readonly phases: CouncilPhaseMark[]
+  readonly messages: CouncilLogLine[]
   /**
-   * Set once a high-frequency mirror fails. The per-agent and per-line records
-   * stop, but the run's outcome is still attempted: a transient append failure
-   * mid-run must not be what deletes the one record the feature exists for.
+   * Set once a per-agent mirror fails. The remaining agent records stop rather
+   * than hammering a session that refuses them; the run's end marker is still
+   * attempted, so a run never reads as `running` for ever.
    */
   streamFailed: boolean
 }
 
+/** Ceilings on what one run may accumulate in memory. */
+const MAX_PHASES = 64
+const MAX_MESSAGES = 256
+
+const NO_NARRATION: CouncilRunNarration = { startedAt: 0, phases: [], messages: [] }
+
 /**
  * Create a recorder that mirrors each workflow event into the parent session.
  * @param ctx - the council tool's plugin context.
- * @returns the start/finish/abandon handle.
+ * @returns the start/narration/finish/abandon handle.
  */
 export function createCouncilRecorder(ctx: Context): CouncilRecorder {
   const active = new Map<string, RunRecord>()
@@ -134,7 +112,7 @@ export function createCouncilRecorder(ctx: Context): CouncilRecorder {
     }
   }
 
-  /** Mirror one high-frequency record, muting the stream after a failure. */
+  /** Mirror one per-agent record, muting the stream after a failure. */
   const stream = (runId: string, type: string, data: unknown): void => {
     const entry = active.get(runId)
     if (entry === undefined || entry.streamFailed) return
@@ -155,39 +133,37 @@ export function createCouncilRecorder(ctx: Context): CouncilRecorder {
     stream(info.id, 'tool-workflow/agent-end', { runId: info.id, seq: agent.seq, outcome: agent.outcome })
   })
 
+  // Phases and log lines are the council's own vocabulary: collected here for
+  // the artifact, never appended as records of their own.
   ctx.on('workflow/phase', (info: WorkflowRunInfo, title: string) => {
-    stream(info.id, 'tool-council/phase', { runId: info.id, title, at: Date.now() })
+    const entry = active.get(info.id)
+    if (entry === undefined || entry.phases.length >= MAX_PHASES) return
+    entry.phases.push({ title, at: Date.now() })
   })
 
   ctx.on('workflow/log', (info: WorkflowRunInfo, message: string) => {
-    stream(info.id, 'tool-council/log', { runId: info.id, message, at: Date.now() })
+    const entry = active.get(info.id)
+    if (entry === undefined || entry.messages.length >= MAX_MESSAGES) return
+    entry.messages.push({ text: message, at: Date.now() })
   })
 
   return {
-    start(session, run, info) {
-      // Two independent node families open here. Registering the run when
-      // EITHER opener lands is what keeps a half-opened run closable: gating on
-      // the first one alone left the council node open for ever whenever the
-      // workflow opener was the one that failed.
-      const workflowOpened = append(session, 'tool-workflow/run-start', { runId: run.id, name: run.meta.name })
-      const councilOpened = append(session, 'tool-council/run-start', {
-        runId: run.id,
-        name: run.meta.name,
-        preset: info.preset,
-        task: taskSnippet(info.task),
-        startedAt: Date.now(),
-        layers: info.layers,
-      })
-      if (workflowOpened || councilOpened) active.set(run.id, { session, streamFailed: false })
+    start(session, run) {
+      const opened = append(session, 'tool-workflow/run-start', { runId: run.id, name: run.meta.name })
+      // Narration is collected whether or not the mirror opened: the artifact
+      // does not depend on the session accepting anything.
+      active.set(run.id, { session, startedAt: Date.now(), phases: [], messages: [], streamFailed: !opened })
     },
-    finish(runId, stopReason, result) {
+    narration(runId) {
+      const entry = active.get(runId)
+      if (entry === undefined) return NO_NARRATION
+      return { startedAt: entry.startedAt, phases: [...entry.phases], messages: [...entry.messages] }
+    },
+    finish(runId, stopReason) {
       const entry = active.get(runId)
       if (entry === undefined) return
-      active.delete(runId)
-      // Outcome first, end marker second, both unconditionally: these are the
-      // two records a reopened run is made of, and a muted stream must not
-      // suppress them.
-      if (result !== undefined) append(entry.session, 'tool-council/result', { runId, result })
+      // The end marker is attempted even on a muted stream: without it the run
+      // reads as `running` for ever.
       append(entry.session, 'tool-workflow/run-end', { runId, stopReason })
     },
     abandon(runId) {
