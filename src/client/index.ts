@@ -43,9 +43,18 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-council: dictionaries')
   ctx.effect(() => ctx.conversationEvents.register(councilLogDefinition), 'ui-council: council-log definition')
 
+  // One binding, two consumers: the card writes through it and the graph tab
+  // reads the deployment's published preset id off the same section, so the tab
+  // is not hard-wired to the shipped `map-reduce` id.
+  const scope = ctx.settingsScope.bind<CouncilSettings>({ namespace: 'council' })
+  const t = ctx.locale.bind(NS)
   const controller = new CouncilCardController(
-    ctx.settingsScope.bind<CouncilSettings>({ namespace: 'council' }),
+    scope,
+    error => t('partialSave', { error }),
   )
+  // The controller holds a `beforeunload` guard while edits are staged; the
+  // effect is what releases it when the plugin is disposed or hot-reloaded.
+  ctx.effect(() => () => { controller.dispose() }, 'ui-council: settings card lifetime')
   const face = (): CouncilCardFace => ({
     hooks: { councilCard: controller.store() },
     ...controller.actions(),
@@ -58,5 +67,5 @@ export function apply(ctx: ClientContext): void {
     inject: face,
   }, CouncilCard))
 
-  registerCouncilView(ctx)
+  registerCouncilView(ctx, scope)
 }

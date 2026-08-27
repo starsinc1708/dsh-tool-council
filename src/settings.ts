@@ -69,6 +69,39 @@ export interface CouncilSettings {
   defaultPreset?: string
   /** Read-only composition mirror; the card renders it and never writes it. */
   topology?: TopologyPreset[]
+  /**
+   * Read-only mirror of the deployment's `maxAgentsPerLayer`. The card needs it
+   * to bound the width input and warn BEFORE a save the host would refuse; it
+   * is written by the composition as part of the section's `base` layer.
+   */
+  maxAgentsPerLayer?: number
+  /**
+   * Read-only mirror of the agent-preset id this council was published under.
+   * The Council conversation tab gates on it, so a deployment that renamed the
+   * published preset still gets its graph instead of an empty state.
+   */
+  agentPresetId?: string
+  /**
+   * Blended $ per 1M tokens for the Council tab's optional cost estimate; `0`
+   * (the default) shows no money at all.
+   *
+   * Deliberately a user preference and deliberately one number. The token meter
+   * reports no price and the view cannot know which route each member actually
+   * ran on, so a per-route figure is impossible by construction. This is the
+   * viewer's own arithmetic on their own rate, labelled as an estimate — not a
+   * bill, and never a substitute for one.
+   */
+  costPerMillionTokens?: number
+  /**
+   * Read-only mirror of the subagent providers registered at boot, for the
+   * card's provider suggestions.
+   *
+   * A BOOT SNAPSHOT: the settings seam has no way to update a base layer after
+   * composition, so a provider registered later will not appear until restart.
+   * That is why the field feeds a `datalist` and not a `<select>` — the list is
+   * a hint, never the set of legal values.
+   */
+  availableProviders?: string[]
   /** User overlay, keyed by preset id. */
   overrides?: Record<string, PresetOverride>
 }

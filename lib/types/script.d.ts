@@ -36,7 +36,19 @@ export interface ScriptArgs {
     readonly reduceMode: 'vote' | 'synthesis';
     readonly maxFindings: number;
     readonly maxFindingChars: number;
+    /** Per-member finding ceiling applied before clustering; `0` disables it. */
+    readonly maxFindingsPerMember: number;
+    /** Wall-clock budget checked at each layer boundary; `0` disables it. */
+    readonly maxRunMs: number;
+    /** Re-issue one `agent()` call whose child died before giving up on it. */
+    readonly retryFailedMembers: boolean;
+    /** Run the same-location merge stage between clustering and verification. */
+    readonly mergeSameLocation: boolean;
+    /** Ceiling on clusters handed to the merge stage. */
+    readonly maxMergeCandidates: number;
     readonly layers: readonly ScriptLayer[];
 }
+/** Why the script stopped: cleanly, or because it ran out of its time budget. */
+export type ScriptStopReason = 'completed' | 'deadline';
 /** The plain-JS body handed to `WorkflowEngine.start`. */
 export declare const COUNCIL_SCRIPT: string;

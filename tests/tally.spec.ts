@@ -1,13 +1,15 @@
 /**
  * Tests for the host's authoritative clustering and quorum arithmetic: the
- * deduplication key, each quorum rule's confirmation condition, the negative
- * outcome's modal-vote tiebreak, the two-ballot floor, and the drift check
- * against the workflow script's own copy.
+ * deduplication key, the per-member cap, the merge fold, each quorum rule's
+ * confirmation condition, the abstention-aware denominator, the negative
+ * outcome's modal-vote tiebreak, and the drift check against the workflow
+ * script's own copy.
  */
 
 import { describe, expect, it } from 'vitest'
 import {
-  applyQuorum, assertTallyAgrees, dedupeFindings, fingerprint, normalizeLocation, renderTable, tally,
+  applyQuorum, assertTallyAgrees, capPerMember, dedupeFindings, fingerprint, mergeClusters,
+  normalizeLocation, renderTable, tally,
 } from '../src/tally.ts'
 import type { Finding, QuorumConfig, VerifierBallot } from '../src/types.ts'
 
@@ -80,11 +82,74 @@ describe('dedupeFindings', () => {
   })
 })
 
+describe('capPerMember', () => {
+  it('keeps every member inside the cap so one talkative member cannot fill the slice', () => {
+    const reported = [
+      { by: 'loud', finding: finding({ title: 'one' }) },
+      { by: 'loud', finding: finding({ title: 'two' }) },
+      { by: 'loud', finding: finding({ title: 'three' }) },
+      { by: 'quiet', finding: finding({ title: 'four' }) },
+    ]
+    const capped = capPerMember(reported, 2)
+    expect(capped.map(entry => entry.finding.title)).toEqual(['one', 'two', 'four'])
+  })
+
+  it('treats a cap of zero as disabled', () => {
+    const reported = [{ by: 'a', finding: finding() }, { by: 'a', finding: finding({ title: 'x' }) }]
+    expect(capPerMember(reported, 0)).toHaveLength(2)
+  })
+})
+
+describe('mergeClusters', () => {
+  const clustered = () => dedupeFindings([
+    { by: 'correctness', finding: finding({ title: 'Greedy scoring inverted' }) },
+    { by: 'tests', finding: finding({ title: 'Ranking uses residual entropy' }) },
+    { by: 'perf-scale', finding: finding({ title: 'Quadratic rescan', location: 'rank.py:88' }) },
+  ])
+
+  it('folds two wordings of one defect into a single cluster and renumbers', () => {
+    const list = clustered()
+    expect(list).toHaveLength(3)
+    const merged = mergeClusters(list, [['f1', 'f2']])
+    expect(merged).toHaveLength(2)
+    expect(merged[0]?.id).toBe('f1')
+    expect(merged[0]?.reportedBy).toEqual(['correctness', 'tests'])
+    expect(merged[0]?.variants).toEqual(['Greedy scoring inverted', 'Ranking uses residual entropy'])
+    expect(merged[1]?.id).toBe('f2')
+    expect(merged[1]?.title).toBe('Quadratic rescan')
+  })
+
+  it('keeps the earliest cluster as the representative whatever order the ids arrive in', () => {
+    const merged = mergeClusters(clustered(), [['f2', 'f1']])
+    expect(merged[0]?.title).toBe('Greedy scoring inverted')
+  })
+
+  it('ignores unknown ids and single-id groups', () => {
+    const list = clustered()
+    expect(mergeClusters(list, [['f9', 'f8'], ['f1'], []])).toHaveLength(3)
+  })
+
+  it('chains groups and carries every reporter to the final survivor', () => {
+    // f1 ≡ f2 and f2 ≡ f3 means all three are one defect. Whichever order the
+    // merge agent lists them in, nobody's report may be dropped on the way —
+    // a lost reporter is a finding that silently shrinks.
+    for (const groups of [[['f1', 'f2'], ['f2', 'f3']], [['f2', 'f3'], ['f1', 'f2']]]) {
+      const merged = mergeClusters(clustered(), groups)
+      expect(merged).toHaveLength(1)
+      expect(merged[0]?.id).toBe('f1')
+      expect(merged[0]?.title).toBe('Greedy scoring inverted')
+      expect([...(merged[0]?.reportedBy ?? [])].sort())
+        .toEqual(['correctness', 'perf-scale', 'tests'])
+      expect(merged[0]?.variants).toHaveLength(3)
+    }
+  })
+})
+
 describe('applyQuorum', () => {
   const counts = (confirmed: number, rejected: number, notABug: number, uncertain: number) =>
     ({ confirmed, rejected, notABug, uncertain })
 
-  it('refuses to decide below two ballots', () => {
+  it('refuses to decide below two participating ballots', () => {
     expect(applyQuorum(counts(1, 0, 0, 0), 1, majority)).toBe('insufficient')
   })
 
@@ -102,15 +167,23 @@ describe('applyQuorum', () => {
     expect(applyQuorum(counts(0, 1, 1, 0), 2, majority)).toBe('rejected')
   })
 
-  it('requires every ballot under unanimity, and uncertainty leaves it insufficient', () => {
+  it('requires every participating ballot under unanimity, and uncertainty leaves it insufficient', () => {
     const unanimous: QuorumConfig = { rule: 'unanimous' }
     expect(applyQuorum(counts(3, 0, 0, 0), 3, unanimous)).toBe('confirmed')
     expect(applyQuorum(counts(2, 0, 0, 1), 3, unanimous)).toBe('insufficient')
   })
 
-  it('honours an explicit threshold, defaulting to every ballot', () => {
+  it('honours an explicit threshold, defaulting to every participating ballot', () => {
     expect(applyQuorum(counts(2, 1, 0, 0), 3, { rule: 'threshold', threshold: 2 })).toBe('confirmed')
     expect(applyQuorum(counts(2, 1, 0, 0), 3, { rule: 'threshold' })).toBe('rejected')
+  })
+
+  it('reports an unreached threshold nobody argued against as unresolved, not refuted', () => {
+    // Two verifiers confirmed and a third died, so a threshold of three is not
+    // met — but calling that REJECTED would invert what the two actually said.
+    expect(applyQuorum(counts(2, 0, 0, 0), 2, { rule: 'threshold', threshold: 3 })).toBe('insufficient')
+    // One dissenter, and the negative arm applies as usual.
+    expect(applyQuorum(counts(2, 1, 0, 0), 3, { rule: 'threshold', threshold: 3 })).toBe('rejected')
   })
 
   it('treats an all-uncertain verdict as insufficient, not rejected', () => {
@@ -144,7 +217,24 @@ describe('tally', () => {
     expect(result.rows[0]?.votes).toEqual(['confirmed', 'confirmed'])
     expect(result.rows[1]?.votes).toEqual(['rejected', null])
     expect(result.rows[0]?.outcome).toBe('confirmed')
-    expect(result.rows[1]?.outcome).toBe('rejected')
+  })
+
+  it('keeps an abstention out of the quorum denominator', () => {
+    const result = tally(clustered, ballots, majority)
+    expect(result.rows[0]?.participating).toBe(2)
+    // One verifier rejected, the other said nothing at all: that is a quorum of
+    // one, so the row is unresolved rather than REJECTED.
+    expect(result.rows[1]?.participating).toBe(1)
+    expect(result.rows[1]?.outcome).toBe('insufficient')
+  })
+
+  it('does not let one confirmation plus one silence confirm under majority', () => {
+    const result = tally(clustered, [
+      { verifier: 'V1', verdicts: [{ findingId: 'f1', vote: 'confirmed', reason: 'read it' }] },
+      { verifier: 'V2', verdicts: [] },
+    ], majority)
+    expect(result.rows[0]?.participating).toBe(1)
+    expect(result.rows[0]?.outcome).toBe('insufficient')
   })
 
   it('ignores a verdict naming a finding that does not exist', () => {
@@ -174,11 +264,22 @@ describe('tally', () => {
     expect(table.split('\n')).toHaveLength(3)
   })
 
-  it('accepts an identical script tally and refuses a divergent one', () => {
+  it('accepts an identical script tally and names the first field of a divergent one', () => {
     const host = tally(clustered, ballots, majority)
     expect(() => { assertTallyAgrees(host, structuredClone(host)) }).not.toThrow()
     const drifted = { ...host, rows: host.rows.map(row => ({ ...row, outcome: 'confirmed' as const })) }
     expect(() => { assertTallyAgrees(host, drifted) })
-      .toThrow('the script tally disagrees with the host recomputation')
+      .toThrow('row 2 (f2): outcome insufficient vs confirmed')
+  })
+
+  it('names a divergent verifier column and a divergent participation count', () => {
+    const host = tally(clustered, ballots, majority)
+    expect(() => { assertTallyAgrees(host, { ...host, verifiers: ['V1', 'V9'] }) })
+      .toThrow('verifier column 2: "V2" vs "V9"')
+    const drifted = {
+      ...host,
+      rows: host.rows.map((row, index) => index === 1 ? { ...row, participating: 2 } : row),
+    }
+    expect(() => { assertTallyAgrees(host, drifted) }).toThrow('row 2 (f2): participating 1 vs 2')
   })
 })

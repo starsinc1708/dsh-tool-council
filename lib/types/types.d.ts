@@ -57,8 +57,14 @@ export interface QuorumConfig {
     readonly threshold?: number;
 }
 /**
- * The outcome of applying a quorum to one finding's votes. `insufficient`
- * means fewer than two verifier ballots survived, so no rule was applied.
+ * The outcome of applying a quorum to one finding's votes.
+ *
+ * `insufficient` is the "unresolved" arm, not a negative one: the finding did
+ * not clear the rule AND no verifier argued against it. That covers two
+ * situations — fewer than two verifiers voted on it at all, or the ones who did
+ * could not meet the bar the rule sets (a `threshold` higher than the number
+ * who voted, or unanimity denied by an `uncertain`). Neither is `rejected`,
+ * because nobody said the claim was wrong.
  */
 export type Outcome = 'confirmed' | 'rejected' | 'not-a-bug' | 'insufficient';
 /** One row of the report table. */
@@ -72,6 +78,12 @@ export interface TallyRow {
         readonly notABug: number;
         readonly uncertain: number;
     };
+    /**
+     * Ballots that voted on THIS finding — the quorum's denominator. An abstention
+     * (`null` vote) is excluded, so a row answered by one verifier is
+     * `insufficient` even when the layer collected three ballots.
+     */
+    readonly participating: number;
     readonly outcome: Outcome;
 }
 /** The full tally: the verifier columns and one row per finding. */
@@ -127,13 +139,77 @@ export interface PresetConfig {
     /** Model-facing: when to choose this preset. It reaches the tool description. */
     description: string;
     /**
-     * `vote` runs deduplication and quorum and renders the verdict table.
-     * `synthesis` skips both and hands raw layer output to the reduce role.
+     * How the reduce role is fed. Both modes deduplicate and both run whatever
+     * verify layer the topology declares — the mode chooses the REPORT shape:
+     * `vote` renders the verdict table as the answer, `synthesis` asks the reduce
+     * role for prose and hands it the table as supporting evidence.
      */
     reduceMode?: ReduceMode;
     /** Prepended to every child prompt in the run. */
     framing?: string;
     layers: LayerConfig[];
+}
+/** One layer of a running topology, as the graph view needs to label it. */
+export interface CouncilLayerRecord {
+    readonly id: string;
+    readonly kind: LayerKind;
+    readonly label: string;
+    /** Instances started on this layer — the sum of its roles' counts. */
+    readonly width: number;
+}
+/** One verdict row, flattened for the durable record. */
+export interface CouncilResultRow {
+    readonly findingId: string;
+    readonly title: string;
+    readonly location: string;
+    readonly severity: string;
+    /** Votes in verifier order; `null` is an abstention. Empty with no verify layer. */
+    readonly votes: readonly (string | null)[];
+    /** Ballots that voted on THIS row — the quorum denominator. */
+    readonly participating: number;
+    /**
+     * The row's {@link Outcome}, or `unverified` when the preset declares no
+     * verify layer at all. `insufficient` means a quorum was attempted and fewer
+     * than two verifiers voted; `unverified` means nobody was ever asked, and
+     * showing the two as one label would misdescribe every synthesis run.
+     */
+    readonly outcome: Outcome | 'unverified';
+    readonly fix: string;
+}
+/**
+ * Everything a settled council run leaves behind, durable in the parent
+ * session. This is what makes a run a reopenable artifact rather than a tool
+ * result that vanishes with the model's context.
+ */
+export interface CouncilResultRecord {
+    readonly preset: string;
+    /** The workflow engine's stop reason, or `deadline` when the script bowed out. */
+    readonly stopReason: string;
+    readonly error?: string;
+    readonly agentsStarted: number;
+    readonly durationMs: number;
+    /** Map members that reported at least one finding. */
+    readonly membersReporting: number;
+    /** Map members that answered at all — an empty list is an answer. */
+    readonly membersResponding: number;
+    readonly mapMembers: number;
+    readonly reportMissing: boolean;
+    readonly counts: {
+        readonly findings: number;
+        readonly confirmed: number;
+        readonly rejected: number;
+        readonly notABug: number;
+        readonly insufficient: number;
+        /** Findings on a preset with no verify layer: nobody was asked to vote. */
+        readonly unverified: number;
+    };
+    readonly verifiers: readonly string[];
+    readonly rows: readonly CouncilResultRow[];
+    /** True when `rows` carries fewer entries than `counts.findings`. */
+    readonly rowsTruncated: boolean;
+    readonly report: string;
+    /** True when `report` was cut to the deployment's ceiling. */
+    readonly reportTruncated: boolean;
 }
 /**
  * The `./types` subpath carries the whole browser-safe surface in one entry:

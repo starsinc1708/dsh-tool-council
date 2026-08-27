@@ -12,15 +12,21 @@
  * @module @starsinc1708/dsh-tool-council
  */
 import type { Context } from '@deepseek-ai/cordis';
+import type { ToolCallView, ToolResult, ToolResultView } from '@deepseek-ai/dsh-tools';
+import type { WorkflowResult } from '@deepseek-ai/dsh-workflow';
 import type { Config } from './policy.ts';
+import type { CouncilResultRecord } from './recorder.ts';
+import type { ScriptStopReason } from './script.ts';
 import type { ClusteredFinding, Tally, VerifierBallot } from './types.ts';
 export type * from './types.ts';
 export type * from './settings.ts';
+export type { CouncilLayerRecord, CouncilResultRecord, CouncilResultRow, CouncilRunStart, } from './recorder.ts';
+export { TASK_SNIPPET_CHARS, taskSnippet } from './recorder.ts';
 export { BUILTIN_PRESETS } from './presets.ts';
-export { Config, expandLayers, resolveConfig } from './policy.ts';
+export { Config, HARD_STOP_GRACE_MS, expandLayers, resolveConfig, totalAgentBudget } from './policy.ts';
 export type { ResolvedConfig } from './policy.ts';
 export { COUNCIL_NAMESPACE, applyOverrides } from './settings.ts';
-export { applyQuorum, dedupeFindings, fingerprint, normalizeLocation, renderTable, tally, } from './tally.ts';
+export { TABLE_LEGEND, applyQuorum, assertClustersWellFormed, capPerMember, dedupeFindings, fingerprint, mergeClusters, normalizeLocation, renderTable, tally, } from './tally.ts';
 export declare const name = "tool-council";
 export declare const inject: string[];
 /** The script's terminal value, after the host re-validated it. */
@@ -29,7 +35,15 @@ interface CouncilOutcome {
     readonly ballots: readonly VerifierBallot[];
     readonly tally: Tally | null;
     readonly report: string;
+    /** The reduce layer ran and returned nothing usable. */
+    readonly reportMissing: boolean;
+    /** Map members that reported at least one finding. */
     readonly membersReporting: number;
+    /** Map members that answered at all — an empty list is a valid answer. */
+    readonly membersResponding: number;
+    /** Map-layer instances started — the denominator of the two counts above. */
+    readonly mapMembers: number;
+    readonly stopReason: ScriptStopReason;
 }
 /**
  * Defensively decode the script's terminal value across the realm boundary.
@@ -39,16 +53,65 @@ interface CouncilOutcome {
  */
 export declare function readOutcome(value: unknown): CouncilOutcome;
 /**
+ * Map a non-clean workflow stop reason to an error message.
+ * @param result - the settled workflow result.
+ * @returns the message, or `undefined` when the run completed cleanly.
+ */
+export declare function stopReasonError(result: WorkflowResult): string | undefined;
+/**
+ * The one-line participation summary, phrased as self-report, not certification.
+ *
+ * Answering and reporting are counted separately on purpose: the map prompt
+ * calls an empty list "a valid and respectable answer", so folding the two
+ * would make a clean run where nobody found anything read as four dead children.
+ * @param outcome - the validated script outcome.
+ * @returns the summary sentence.
+ */
+export declare function summaryLine(outcome: CouncilOutcome): string;
+/**
  * Render the council's result for the parent model.
  *
  * The quorum line is deliberately phrased as a count of members, not as a
  * certification: verifiers are agents re-reading the same repository, and the
- * table would otherwise read as an independent oracle.
+ * table would otherwise read as an independent oracle. A run that lost its
+ * synthesizer or ran out of its budget says so here rather than presenting a
+ * partial council as a complete one.
  * @param outcome - the validated script outcome.
  * @param maxChars - the report ceiling.
  * @returns the model-facing text.
  */
 export declare function renderOutcome(outcome: CouncilOutcome, maxChars: number): string;
+/**
+ * Flatten a settled outcome into the durable record the Council tab reopens.
+ * @param outcome - the validated script outcome.
+ * @param context - the preset, the engine's stop reason, and the run's timings.
+ * @returns the record appended as `tool-council/result`.
+ */
+export declare function buildResultRecord(outcome: CouncilOutcome, context: {
+    readonly preset: string;
+    readonly stopReason: string;
+    readonly agentsStarted: number;
+    readonly durationMs: number;
+    readonly maxReportChars: number;
+}): CouncilResultRecord;
+/**
+ * The record left behind by a run that never produced a usable value.
+ * @param context - the preset, the failure's stop reason and message, and timings.
+ * @returns a record whose counts are zero and whose stop reason names the failure.
+ */
+export declare function failureRecord(context: {
+    readonly preset: string;
+    readonly stopReason: string;
+    readonly error: string;
+    readonly agentsStarted: number;
+    readonly durationMs: number;
+}): CouncilResultRecord;
+interface CouncilArgs {
+    task: string;
+    preset?: string;
+}
+export declare function presentCall(args: CouncilArgs): ToolCallView;
+export declare function presentResult(args: CouncilArgs, result: ToolResult): ToolResultView;
 /**
  * Register the council tool and its usage policy.
  * @param ctx - the plugin context; `inject` guarantees the four services.

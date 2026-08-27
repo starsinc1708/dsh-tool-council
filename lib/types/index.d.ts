@@ -62,9 +62,12 @@ export interface Config {
     councilPolicy?: CouncilConfig;
 }
 /**
- * User-plane schema for the `council` settings section. `topology` is written
- * by the composition as the section's `base` layer and is never a user field;
- * it exists so the settings card can render the deployment's real layers.
+ * User-plane schema for the `council` settings section. `topology`,
+ * `maxAgentsPerLayer`, and `agentPresetId` are written by the composition as
+ * the section's `base` layer and are never user fields; they exist so the
+ * settings card can render the deployment's real layers and refuse an
+ * over-wide overlay before the write, and so the Council tab can gate on the
+ * preset id this deployment actually published.
  */
 export declare const CouncilSettingsSchema: z<CouncilSettings>;
 /** Schemastery configuration for the host row. */

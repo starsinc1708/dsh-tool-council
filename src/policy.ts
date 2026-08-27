@@ -29,11 +29,49 @@ export interface Config {
   maxLayers?: number
   /** Ceiling on findings carried into the verify layer (default 200). */
   maxFindings?: number
+  /**
+   * Ceiling on findings one member contributes before clustering (default 50).
+   * `0` disables it. Without a per-member cap one talkative member can fill
+   * `maxFindings` and the quieter members never reach the slice.
+   */
+  maxFindingsPerMember?: number
   /** Ceiling on one serialized finding's characters (default 2000). */
   maxFindingChars?: number
   /** Ceiling on the parent-facing report's characters (default 32768). */
   maxReportChars?: number
+  /**
+   * Wall-clock budget for one run in milliseconds; `0` (the default) disables
+   * it. The script checks it at each layer boundary and still runs the trailing
+   * reduce layer, so an over-budget run returns partial findings with an
+   * explicit stop reason rather than nothing. The host cancels the run outright
+   * once the budget plus {@link HARD_STOP_GRACE_MS} has passed — the backstop
+   * for a layer that never settles, and the only enforcement left if the worker
+   * realm exposes no clock. A layer already running is never cut short, so this
+   * bounds how long a run keeps spending, not when it stops.
+   */
+  maxRunMs?: number
+  /**
+   * Re-issue one `agent()` call whose child died before giving up on that role
+   * (default true). A dead child resolves to `null` instead of throwing, so
+   * without this a transport failure silently removes a whole lens.
+   */
+  retryFailedMembers?: boolean
+  /**
+   * Run the merge stage between clustering and verification (default true).
+   * It spends one extra child ONLY when two clusters share a location, which is
+   * exactly the case the lexical key cannot decide.
+   */
+  mergeSameLocation?: boolean
+  /** Ceiling on clusters handed to the merge stage (default 60). */
+  maxMergeCandidates?: number
 }
+
+/**
+ * Grace added to `maxRunMs` before the host cancels the run outright. The
+ * script's own budget check happens at layer boundaries, so it needs room to
+ * finish the layer it is in and write the report.
+ */
+export const HARD_STOP_GRACE_MS = 60_000
 
 const Quorum: z<QuorumConfig> = z.object({
   rule: z.union(['majority', 'unanimous', 'threshold'] as const).default('majority'),
@@ -75,8 +113,13 @@ export const Config: z<Config> = z.object({
   maxAgentsPerLayer: z.number().step(1).min(1).max(64).default(12),
   maxLayers: z.number().step(1).min(1).max(16).default(6),
   maxFindings: z.number().step(1).min(1).max(10_000).default(200),
+  maxFindingsPerMember: z.number().step(1).min(0).max(10_000).default(50),
   maxFindingChars: z.number().step(1).min(1).max(100_000).default(2_000),
   maxReportChars: z.number().step(1).min(1).max(1_000_000).default(32_768),
+  maxRunMs: z.number().step(1).min(0).max(24 * 60 * 60 * 1000).default(0),
+  retryFailedMembers: z.boolean().default(true),
+  mergeSameLocation: z.boolean().default(true),
+  maxMergeCandidates: z.number().step(1).min(2).max(1_000).default(60),
 })
 
 export interface ResolvedConfig {
@@ -84,9 +127,15 @@ export interface ResolvedConfig {
   readonly subagentProvider: string
   readonly presets: readonly PresetConfig[]
   readonly defaultPreset: PresetConfig
+  readonly maxAgentsPerLayer: number
   readonly maxFindings: number
+  readonly maxFindingsPerMember: number
   readonly maxFindingChars: number
   readonly maxReportChars: number
+  readonly maxRunMs: number
+  readonly retryFailedMembers: boolean
+  readonly mergeSameLocation: boolean
+  readonly maxMergeCandidates: number
 }
 
 /**
@@ -119,16 +168,25 @@ export function resolveConfig(config: Config): ResolvedConfig {
     /* v8 ignore next -- length was checked above; the index cannot be empty. */
     if (last === undefined) throw new TypeError(`${where}: has no layers`)
     if (last.kind !== 'reduce') throw new TypeError(`${where}: the last layer must be a reduce layer`)
-    // The reduce branch in the script returns unconditionally, so any layer
-    // after a reduce is silently dropped; and the script tallies ballots with
-    // the LAST verify layer's quorum while the host recomputes with the first,
-    // so a second verify layer would split the two copies.
+    // A second reduce layer would overwrite the first one's report with no
+    // record that it existed; and the script tallies ballots with the LAST
+    // verify layer's quorum while the host recomputes with the first, so a
+    // second verify layer would split the two copies.
     if (preset.layers.slice(0, -1).some(layer => layer.kind === 'reduce')) {
       throw new TypeError(`${where}: only the last layer may be a reduce layer`)
     }
     const verifyCount = preset.layers.filter(layer => layer.kind === 'verify').length
     if (verifyCount > 1) {
       throw new TypeError(`${where}: at most one verify layer is supported (${verifyCount} declared)`)
+    }
+    // Every map layer re-clusters the CUMULATIVE finding list and renumbers
+    // `f1…fn`, so a map layer after the verify layer invalidates the ids the
+    // ballots were cast against — and the host's recomputation then refuses the
+    // run at the very end, after every child has been paid for. Refuse the
+    // topology at load instead.
+    const verifyAt = preset.layers.findIndex(layer => layer.kind === 'verify')
+    if (verifyAt >= 0 && preset.layers.slice(verifyAt + 1).some(layer => layer.kind === 'map')) {
+      throw new TypeError(`${where}: a map layer may not follow the verify layer`)
     }
     validateLayers(preset, maxAgentsPerLayer, where)
   }
@@ -142,10 +200,40 @@ export function resolveConfig(config: Config): ResolvedConfig {
     subagentProvider: config.subagentProvider ?? 'spawn',
     presets,
     defaultPreset,
+    maxAgentsPerLayer,
     maxFindings: config.maxFindings ?? 200,
+    maxFindingsPerMember: config.maxFindingsPerMember ?? 50,
     maxFindingChars: config.maxFindingChars ?? 2_000,
     maxReportChars: config.maxReportChars ?? 32_768,
+    maxRunMs: config.maxRunMs ?? 0,
+    retryFailedMembers: config.retryFailedMembers ?? true,
+    mergeSameLocation: config.mergeSameLocation ?? true,
+    maxMergeCandidates: config.maxMergeCandidates ?? 60,
   }
+}
+
+/**
+ * The run's `maxTotalAgents` ceiling.
+ *
+ * `maxTotalAgents` is a hard engine cap, not a budget: a call past it kills the
+ * run with `AGENT_CAP`. So it has to allow for everything the script may
+ * legitimately spend — one retry per member when `retryFailedMembers` is on,
+ * and one merge child when the merge stage is enabled — or a single dead child
+ * would turn a degraded run into a failed one.
+ * @param layers - the expanded layers of the preset being run.
+ * @param options - whether retries and the merge stage are enabled.
+ * @returns the ceiling to hand `WorkflowEngine.start`.
+ */
+export function totalAgentBudget(
+  layers: readonly ScriptLayer[],
+  options: { readonly retryFailedMembers: boolean; readonly mergeSameLocation: boolean },
+): number {
+  const instances = layers.reduce((sum, layer) => sum + layer.instances.length, 0)
+  // Exactly one merge child per run: the script clusters once, at the last map
+  // layer, however many map layers the topology declares.
+  const merge = options.mergeSameLocation ? 1 : 0
+  const attempts = options.retryFailedMembers ? 2 : 1
+  return (instances + merge) * attempts
 }
 
 /**
@@ -157,6 +245,11 @@ export function resolveConfig(config: Config): ResolvedConfig {
  */
 function validateLayers(preset: PresetConfig, maxAgentsPerLayer: number, where: string): void {
   const layerIds = new Set<string>()
+  // Role ids are unique across the WHOLE preset, not just within a layer:
+  // `expandLayers` derives the instance id from the role id alone, so two
+  // layers sharing a role id would share an instance id — collapsing their
+  // per-member caps and their `reportedBy` attributions into one phantom member.
+  const roleIds = new Set<string>()
   for (const layer of preset.layers) {
     if (layerIds.has(layer.id)) throw new TypeError(`${where}: duplicate layer id "${layer.id}"`)
     layerIds.add(layer.id)
@@ -167,7 +260,6 @@ function validateLayers(preset: PresetConfig, maxAgentsPerLayer: number, where: 
         `${where}: layer "${layer.id}" width ${width} exceeds maxAgentsPerLayer ${maxAgentsPerLayer}`,
       )
     }
-    const roleIds = new Set<string>()
     for (const role of layer.roles) {
       if (roleIds.has(role.id)) {
         throw new TypeError(`${where}: layer "${layer.id}" has a duplicate role id "${role.id}"`)

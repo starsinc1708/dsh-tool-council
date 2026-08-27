@@ -40,7 +40,12 @@
         #   maxAgentsPerLayer: 12
         #   maxLayers: 6
         #   maxFindings: 200
+        #   maxFindingsPerMember: 50
         #   maxFindingChars: 2000
         #   maxReportChars: 32768
+        #   maxRunMs: 0              # wall-clock budget; 0 disables it
+        #   retryFailedMembers: true # re-issue one dead child before losing the lens
+        #   mergeSameLocation: true  # one merge child when two clusters share a location
+        #   maxMergeCandidates: 60
         #   defaultPreset: bug-hunt
         #   presets: []        # replaces the four shipped topologies wholesale

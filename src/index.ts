@@ -89,13 +89,20 @@ const PresetOverrideSchema: z<PresetOverride> = z.object({
 })
 
 /**
- * User-plane schema for the `council` settings section. `topology` is written
- * by the composition as the section's `base` layer and is never a user field;
- * it exists so the settings card can render the deployment's real layers.
+ * User-plane schema for the `council` settings section. `topology`,
+ * `maxAgentsPerLayer`, and `agentPresetId` are written by the composition as
+ * the section's `base` layer and are never user fields; they exist so the
+ * settings card can render the deployment's real layers and refuse an
+ * over-wide overlay before the write, and so the Council tab can gate on the
+ * preset id this deployment actually published.
  */
 export const CouncilSettingsSchema: z<CouncilSettings> = z.object({
   defaultPreset: z.string(),
   topology: z.array(z.any()).default([]),
+  maxAgentsPerLayer: z.number().step(1).min(1).max(64).default(12),
+  agentPresetId: z.string().default('map-reduce'),
+  costPerMillionTokens: z.number().min(0).max(10_000).default(0),
+  availableProviders: z.array(z.string()).default([]),
   overrides: z.dict(PresetOverrideSchema).default({}),
 }) as unknown as z<CouncilSettings>
 
@@ -168,6 +175,29 @@ function toolConfigOf(policy: unknown): string {
   return dump(policy, { noRefs: true, lineWidth: -1 }).trimEnd()
 }
 
+/** The slice of `ctx.subagents` this row reads, when the plane carries one. */
+interface SubagentsLike {
+  list(): string[]
+}
+
+/**
+ * Snapshot the registered subagent provider names for the card's suggestions.
+ *
+ * Optional on purpose: this row is dependency-free and sits on the host plane,
+ * where the subagent registry may not be published at all. An empty list simply
+ * means the card suggests nothing and the field stays free text.
+ * @param ctx - the host row's plugin context.
+ * @returns the provider names, or an empty list.
+ */
+function registeredProviders(ctx: Context): string[] {
+  try {
+    return (ctx.get('subagents') as SubagentsLike | undefined)?.list() ?? []
+  } catch {
+    /* v8 ignore next -- a registry that throws on enumeration is not worth failing boot over. */
+    return []
+  }
+}
+
 /**
  * Register the host row: own the `council` settings namespace and publish the
  * Map-Reduce preset.
@@ -178,13 +208,26 @@ export function apply(ctx: Context, config: Config): void {
   // Validate the policy at load, not at call: a topology that violates the
   // structural rules must break the deployment.
   const policy = resolveConfig(config.councilPolicy ?? {})
+  // The mode id this council answers to. When `installPreset` is false nothing
+  // is written to the roster, but the id still names the mode a hand-composed
+  // deployment mounts the tool in — which is exactly what the Council tab gates
+  // on, so it is mirrored either way.
+  const presetId = config.presetId ?? 'map-reduce'
+  const baseTopology = toTopology(policy.presets)
+  const baseTopologyJson = JSON.stringify(baseTopology)
 
   // The user plane may widen or narrow a role and re-route its model; it may
   // not change the topology. It lives in the `council` namespace, which this
   // always-composed row owns, so the card can reach it in every mode.
   installSettingsSection(ctx, settingsNamespace(COUNCIL_NAMESPACE), CouncilSettingsSchema, {
     defaultPreset: policy.defaultPreset.id,
-    topology: toTopology(policy.presets),
+    topology: baseTopology,
+    // Read-only mirrors: the card bounds its width input against the real
+    // ceiling instead of a hard-coded 16, and the Council tab gates on the id
+    // this deployment actually published rather than the shipped default.
+    maxAgentsPerLayer: policy.maxAgentsPerLayer,
+    agentPresetId: presetId,
+    availableProviders: registeredProviders(ctx),
     overrides: {},
   }, {
     // This row OWNS the section but does not consume it — the tool row reads
@@ -194,6 +237,25 @@ export function apply(ctx: Context, config: Config): void {
     // Refuse the write, not the next call: an overlay that pushes a layer past
     // maxAgentsPerLayer must fail in the settings UI where the user can see it.
     validate: (value) => {
+      // All THREE mirrors describe the composition, not a preference, and the
+      // card reads every one of them: `topology` decides which roles and widths
+      // it draws, `maxAgentsPerLayer` its ceiling check, `agentPresetId` the
+      // Council tab's gate. A user layer shadowing any of them would move what
+      // the card believes without moving what the tool runs, so refuse the
+      // write. `topology` is compared structurally because it is an array.
+      if (value.maxAgentsPerLayer !== undefined && value.maxAgentsPerLayer !== policy.maxAgentsPerLayer) {
+        throw new TypeError('council: maxAgentsPerLayer mirrors the composition and cannot be set here')
+      }
+      if (value.agentPresetId !== undefined && value.agentPresetId !== presetId) {
+        throw new TypeError('council: agentPresetId mirrors the composition and cannot be set here')
+      }
+      if (value.topology !== undefined && JSON.stringify(value.topology) !== baseTopologyJson) {
+        throw new TypeError('council: topology mirrors the composition and cannot be set here')
+      }
+      if (value.availableProviders !== undefined
+        && JSON.stringify(value.availableProviders) !== JSON.stringify(registeredProviders(ctx))) {
+        throw new TypeError('council: availableProviders mirrors the composition and cannot be set here')
+      }
       void resolveConfig({
         ...(config.councilPolicy ?? {}),
         presets: applyOverrides(policy.presets, value.overrides),
@@ -205,7 +267,7 @@ export function apply(ctx: Context, config: Config): void {
   if (config.installPreset === false) return
 
   const options = {
-    presetId: config.presetId ?? 'map-reduce',
+    presetId,
     sourceId: config.presetSource ?? 'standard',
     name: config.presetName ?? 'Map-Reduce mode',
     description: config.presetDescription ?? '',
