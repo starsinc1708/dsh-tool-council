@@ -104,4 +104,84 @@ describe('built client bundle', () => {
     expect(source).toContain('__ModuleLoader__')
     expect(source).toContain('@starsinc1708/dsh-tool-council')
   })
+
+  it.runIf(existsSync(bundle))('registers the settings card when driven like the real loader', () => {
+    // The end-to-end proof: evaluate the SHIPPED artifact through the loader
+    // protocol, resolve its requires from the seed table only, and apply it.
+    // A missing card in Settings -> Plugins is exactly a missing `council` key
+    // here, and the require shim below fails loudly on a module-table miss.
+    const loaded = loadBundle(readFileSync(bundle, 'utf8'))
+    expect(loaded.id).toBe('@starsinc1708/dsh-tool-council')
+    expect(loaded.exports.inject).toEqual(expect.arrayContaining(['slots', 'locale', 'settingsScope', 'sessions']))
+
+    const registered: Array<{ name: string; key: string }> = []
+    loaded.exports.apply(stubClientContext(registered))
+    // The plugins tab shows a namespace only when a card is registered under
+    // its key AND the host serves it; this is the half this package owns.
+    expect(registered).toContainEqual({ name: 'settings.plugin.item', key: 'council' })
+    expect(registered).toContainEqual({ name: 'conversation.view', key: 'council' })
+  })
 })
+
+/** The loader's seed modules, reduced to what the bundle actually touches. */
+function seedModule(id: string): unknown {
+  if (id === 'react') {
+    return {
+      useState: (initial: unknown) => [initial, () => {}],
+      useCallback: (fn: unknown) => fn,
+      useSyncExternalStore: (_subscribe: unknown, get: () => unknown) => get(),
+    }
+  }
+  if (id === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null, Fragment: 'Fragment' }
+  throw new Error(`missed the module table: ${id}`)
+}
+
+/**
+ * Evaluate the built bundle the way `window.__ModuleLoader__` does.
+ * @param source - the bundle text.
+ * @returns the registered module id and its exports.
+ */
+function loadBundle(source: string): { id: string; exports: { apply: (ctx: unknown) => void; inject: string[] } } {
+  let registered: { id: string; factory: (require: (id: string) => unknown) => never } | undefined
+  const doc = {
+    createElement: () => ({ dataset: {} as Record<string, string>, setAttribute: () => {}, textContent: '' }),
+    head: { appendChild: () => {} },
+    querySelector: () => null,
+    body: { append: () => {}, appendChild: () => {} },
+  }
+  const win = {
+    __ModuleLoader__: { load: (module: typeof registered) => { registered = module } },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }
+  // eslint-disable-next-line no-new-func -- evaluating the artifact IS the test.
+  new Function('window', 'document', source)(win, doc)
+  if (registered === undefined) throw new Error('the bundle registered no module')
+  return { id: registered.id, exports: registered.factory(seedModule) as never }
+}
+
+/** A ClientContext stub that records what the plugin registers. */
+function stubClientContext(registered: Array<{ name: string; key: string }>): unknown {
+  const scope = {
+    getSnapshot: () => ({
+      status: 'ready', value: { defaultPreset: 'bug-hunt', topology: [], overrides: {} },
+      base: undefined, user: undefined, revision: 1, writable: true, mode: 'host',
+    }),
+    subscribe: () => () => {},
+    set: async () => {},
+    unset: async () => {},
+  }
+  return {
+    effect: (run: () => unknown) => run(),
+    locale: { register: () => () => {}, bind: () => (key: string) => key },
+    settingsScope: { bind: () => scope },
+    sessions: { binding: () => undefined },
+    slots: {
+      inject: (_name: string, run: () => unknown) => run(),
+      register: (spec: { name: string; key?: string; id?: string }) => {
+        registered.push({ name: spec.name, key: spec.key ?? spec.id ?? '' })
+        return () => {}
+      },
+    },
+  }
+}
