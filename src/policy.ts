@@ -64,6 +64,15 @@ export interface Config {
   mergeSameLocation?: boolean
   /** Ceiling on clusters handed to the merge stage (default 60). */
   maxMergeCandidates?: number
+  /**
+   * Whether the prompt section mandates the council for every substantive
+   * request (default true — that mandate is what Map-Reduce mode IS).
+   *
+   * Set false for a deployment that mounts the tool inside a general-purpose
+   * mode, where fanning every question out to eight children is not what the
+   * user asked for.
+   */
+  councilEveryRequest?: boolean
 }
 
 /**
@@ -120,6 +129,7 @@ export const Config: z<Config> = z.object({
   retryFailedMembers: z.boolean().default(true),
   mergeSameLocation: z.boolean().default(true),
   maxMergeCandidates: z.number().step(1).min(2).max(1_000).default(60),
+  councilEveryRequest: z.boolean().default(true),
 })
 
 export interface ResolvedConfig {
@@ -136,6 +146,7 @@ export interface ResolvedConfig {
   readonly retryFailedMembers: boolean
   readonly mergeSameLocation: boolean
   readonly maxMergeCandidates: number
+  readonly councilEveryRequest: boolean
 }
 
 /**
@@ -209,6 +220,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     retryFailedMembers: config.retryFailedMembers ?? true,
     mergeSameLocation: config.mergeSameLocation ?? true,
     maxMergeCandidates: config.maxMergeCandidates ?? 60,
+    councilEveryRequest: config.councilEveryRequest ?? true,
   }
 }
 

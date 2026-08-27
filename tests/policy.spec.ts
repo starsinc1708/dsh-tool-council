@@ -115,6 +115,10 @@ describe('run ceilings', () => {
     expect(resolved.maxRunMs).toBe(0)
     expect(resolved.retryFailedMembers).toBe(true)
     expect(resolved.mergeSameLocation).toBe(true)
+    // The mandate is what Map-Reduce mode IS, so it stays on by default.
+    expect(resolved.councilEveryRequest).toBe(true)
+    expect(resolveConfig({ presets: [valid()], defaultPreset: 'x', councilEveryRequest: false })
+      .councilEveryRequest).toBe(false)
   })
 
   it('leaves room for one retry per member and for the merge child', () => {

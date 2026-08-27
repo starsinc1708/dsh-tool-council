@@ -47,5 +47,6 @@
         #   retryFailedMembers: true # re-issue one dead child before losing the lens
         #   mergeSameLocation: true  # one merge child when two clusters share a location
         #   maxMergeCandidates: 60
+        #   councilEveryRequest: true  # false = offer the council, do not mandate it
         #   defaultPreset: bug-hunt
         #   presets: []        # replaces the four shipped topologies wholesale

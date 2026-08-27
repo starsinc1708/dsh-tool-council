@@ -358,6 +358,7 @@ const OUTPUT_PROPERTIES = {
   preset: { type: 'string', required: true },
   agentsStarted: { type: 'integer', required: true },
   stopReason: { type: 'string', required: true },
+  durationMs: { type: 'integer', required: true },
   result: { type: 'json', required: true },
 } as const
 
@@ -372,6 +373,7 @@ interface CouncilPresentationMeta {
   readonly preset: string
   readonly agentsStarted: number
   readonly stopReason: string
+  readonly durationMs: number
   readonly findings: number
   readonly confirmed: number
   readonly membersReporting: number
@@ -400,6 +402,7 @@ export function presentResult(args: CouncilArgs, result: ToolResult): ToolResult
   const parts = [`${view.membersResponding}/${view.mapMembers} answered`, `${view.findings} findings`]
   if (view.findings > 0) parts.push(`${view.confirmed} confirmed`)
   parts.push(`${view.agentsStarted} agents`)
+  if (view.durationMs > 0) parts.push(`${Math.round(view.durationMs / 1000)}s`)
   if (view.stopReason !== 'completed') parts.push(view.stopReason)
   if (view.reportMissing) parts.push('no report')
   return { card: 'generic', title: `council: ${view.preset} — ${parts.join(' · ')}` }
@@ -450,15 +453,23 @@ export function apply(ctx: Context, config: Config): void {
     .map(preset => `- ${preset.id}: ${preset.description}`)
     .join('\n')
 
+  const presetGuidance = 'Pick the preset by the task — `bug-hunt` for finding defects or auditing code, '
+    + '`research` for investigating a question, `feature-design` for designing a feature, `refactor` for '
+    + 'planning a refactor. Its verdicts are what its members reported, not independent certification.'
   ctx.systemPrompt.section({
     name: 'tool:council',
     order: 117,
-    text: 'You are operating in Map-Reduce mode. Answer every substantive request through the `council` '
-      + 'tool: choose the preset that matches the task, call `council` with the full task text, then report '
-      + 'its verdict table and written conclusion. Pick the preset by the task — `bug-hunt` for finding '
-      + 'defects or auditing code, `research` for investigating a question, `feature-design` for designing '
-      + 'a feature, `refactor` for planning a refactor. Only trivial chit-chat may be answered directly. '
-      + 'Its verdicts are what its members reported, not independent certification.',
+    // The mandate is the mode's whole point, so it stays the default — but a
+    // deployment that composes the tool into a general mode needs the council
+    // available without every trivial question fanning out to eight children.
+    text: composed.councilEveryRequest
+      ? 'You are operating in Map-Reduce mode. Answer every substantive request through the `council` '
+        + 'tool: choose the preset that matches the task, call `council` with the full task text, then report '
+        + 'its verdict table and written conclusion. Only trivial chit-chat may be answered directly. '
+        + presetGuidance
+      : 'The `council` tool runs a fan-out of independent subagents over one task. Reach for it when a '
+        + 'question is worth several independent readings — an audit, a design decision, a claim you want '
+        + 'cross-checked — and answer directly otherwise. ' + presetGuidance,
   })
 
   ctx.tools.register(defineTool({
@@ -496,6 +507,7 @@ export function apply(ctx: Context, config: Config): void {
           preset: value.preset,
           agentsStarted: value.agentsStarted,
           stopReason: value.stopReason,
+          durationMs: value.durationMs,
           findings: outcome.findings.length,
           confirmed: outcome.tally === null
             ? 0
@@ -602,6 +614,7 @@ export function apply(ctx: Context, config: Config): void {
           preset: preset.id,
           agentsStarted: settled.agentsStarted,
           stopReason: record.stopReason,
+          durationMs: record.durationMs,
           result: outcome as unknown as JsonValue,
         }
       } catch (error: unknown) {

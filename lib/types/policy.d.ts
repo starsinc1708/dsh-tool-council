@@ -60,6 +60,15 @@ export interface Config {
     mergeSameLocation?: boolean;
     /** Ceiling on clusters handed to the merge stage (default 60). */
     maxMergeCandidates?: number;
+    /**
+     * Whether the prompt section mandates the council for every substantive
+     * request (default true — that mandate is what Map-Reduce mode IS).
+     *
+     * Set false for a deployment that mounts the tool inside a general-purpose
+     * mode, where fanning every question out to eight children is not what the
+     * user asked for.
+     */
+    councilEveryRequest?: boolean;
 }
 /**
  * Grace added to `maxRunMs` before the host cancels the run outright. The
@@ -83,6 +92,7 @@ export interface ResolvedConfig {
     readonly retryFailedMembers: boolean;
     readonly mergeSameLocation: boolean;
     readonly maxMergeCandidates: number;
+    readonly councilEveryRequest: boolean;
 }
 /**
  * Validate the composition at load, not at call.

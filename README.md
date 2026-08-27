@@ -122,6 +122,7 @@ Two things worth stating plainly, because both are outside the agent sandbox:
           retryFailedMembers: true
           mergeSameLocation: true
           maxMergeCandidates: 60
+          councilEveryRequest: true   # false = offer the council, do not mandate it
           defaultPreset: bug-hunt
           # presets: []   # replaces the four shipped topologies wholesale
 ```

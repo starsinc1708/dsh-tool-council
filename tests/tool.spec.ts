@@ -198,12 +198,13 @@ describe('call and result cards', () => {
       content: [],
       isError: false,
       meta: {
-        runId: 'r', preset: 'bug-hunt', agentsStarted: 8, stopReason: 'deadline',
+        runId: 'r', preset: 'bug-hunt', agentsStarted: 8, stopReason: 'deadline', durationMs: 12_400,
         findings: 5, confirmed: 2, membersReporting: 3, membersResponding: 4, mapMembers: 4,
         reportMissing: true,
       },
     })
-    expect(view.title).toBe('council: bug-hunt — 4/4 answered · 5 findings · 2 confirmed · 8 agents · deadline · no report')
+    expect(view.title)
+      .toBe('council: bug-hunt — 4/4 answered · 5 findings · 2 confirmed · 8 agents · 12s · deadline · no report')
   })
 
   it('falls back to a bare title when the metadata is absent or foreign', () => {
