@@ -110,7 +110,7 @@ describe('expandLayers threshold default', () => {
 describe('run ceilings', () => {
   it('exposes the ceilings the script and the settings card both read', () => {
     const resolved = resolveConfig({ presets: [valid()], defaultPreset: 'x' })
-    expect(resolved.maxAgentsPerLayer).toBe(12)
+    expect(resolved.maxAgentsPerLayer).toBe(100)
     expect(resolved.maxFindingsPerMember).toBe(50)
     expect(resolved.maxRunMs).toBe(0)
     expect(resolved.retryFailedMembers).toBe(true)

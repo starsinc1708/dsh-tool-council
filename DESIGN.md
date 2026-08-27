@@ -123,7 +123,7 @@ export const inject = ['tools', 'workflowEngine', 'subagents', 'systemPrompt']
   config:
     subagentProvider: spawn
     toolName: council
-    maxAgentsPerLayer: 12
+    maxAgentsPerLayer: 100
     maxLayers: 6
     maxFindings: 200
     maxFindingChars: 2000

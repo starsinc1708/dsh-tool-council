@@ -23,7 +23,7 @@ export interface Config {
   presets?: PresetConfig[]
   /** Preset used when the model names none. Must be one of `presets`. */
   defaultPreset?: string
-  /** Ceiling on one layer's concurrent children (default 12). */
+  /** Ceiling on one layer's concurrent children (default 100). */
   maxAgentsPerLayer?: number
   /** Ceiling on a preset's layer count (default 6). */
   maxLayers?: number
@@ -119,7 +119,7 @@ export const Config: z<Config> = z.object({
   subagentProvider: z.string().default('spawn'),
   presets: z.array(Preset).default([...BUILTIN_PRESETS] as PresetConfig[]),
   defaultPreset: z.string().default('bug-hunt'),
-  maxAgentsPerLayer: z.number().step(1).min(1).max(64).default(12),
+  maxAgentsPerLayer: z.number().step(1).min(1).max(100).default(100),
   maxLayers: z.number().step(1).min(1).max(16).default(6),
   maxFindings: z.number().step(1).min(1).max(10_000).default(200),
   maxFindingsPerMember: z.number().step(1).min(0).max(10_000).default(50),
@@ -163,7 +163,7 @@ export interface ResolvedConfig {
  */
 export function resolveConfig(config: Config): ResolvedConfig {
   const presets = config.presets ?? [...BUILTIN_PRESETS]
-  const maxAgentsPerLayer = config.maxAgentsPerLayer ?? 12
+  const maxAgentsPerLayer = config.maxAgentsPerLayer ?? 100
   const maxLayers = config.maxLayers ?? 6
   if (presets.length === 0) throw new TypeError('council: at least one preset is required')
   const ids = new Set<string>()

@@ -19,7 +19,7 @@ export interface Config {
     presets?: PresetConfig[];
     /** Preset used when the model names none. Must be one of `presets`. */
     defaultPreset?: string;
-    /** Ceiling on one layer's concurrent children (default 12). */
+    /** Ceiling on one layer's concurrent children (default 100). */
     maxAgentsPerLayer?: number;
     /** Ceiling on a preset's layer count (default 6). */
     maxLayers?: number;

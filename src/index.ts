@@ -99,7 +99,7 @@ const PresetOverrideSchema: z<PresetOverride> = z.object({
 export const CouncilSettingsSchema: z<CouncilSettings> = z.object({
   defaultPreset: z.string(),
   topology: z.array(z.any()).default([]),
-  maxAgentsPerLayer: z.number().step(1).min(1).max(64).default(12),
+  maxAgentsPerLayer: z.number().step(1).min(1).max(100).default(100),
   agentPresetId: z.string().default('map-reduce'),
   costPerMillionTokens: z.number().min(0).max(10_000).default(0),
   overrides: z.dict(PresetOverrideSchema).default({}),
