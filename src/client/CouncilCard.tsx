@@ -94,10 +94,12 @@ function downloadText(name: string, text: string): boolean {
 /**
  * Every distinct route already named somewhere in the deployment.
  *
- * There is no catalogue service the settings plane can reach, so the
- * suggestions are what this deployment already uses — the composition's own
- * routes plus anything the user has staged. Free text stays free: a `datalist`
- * suggests, a `<select>` would silently hide every valid id nobody listed.
+ * There is no catalogue the settings plane can reach: the subagent registry is
+ * not published on the host plane at composition time, so a mirror of it would
+ * be empty by construction. The suggestions are therefore what this deployment
+ * already uses — the composition's own routes plus anything the user staged.
+ * Free text stays free: a `datalist` suggests, a `<select>` would silently hide
+ * every valid id nobody listed.
  * @param state - the card's current snapshot.
  * @param field - which route to collect.
  * @returns the distinct values, sorted, with the empty one dropped.
@@ -112,7 +114,6 @@ export function routeSuggestions(state: CouncilCardState, field: 'model' | 'prov
       }
     }
   }
-  if (field === 'provider') for (const name of state.availableProviders) seen.add(name)
   seen.delete('')
   return [...seen].sort((a, b) => a.localeCompare(b))
 }

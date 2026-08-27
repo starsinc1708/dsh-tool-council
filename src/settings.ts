@@ -92,16 +92,6 @@ export interface CouncilSettings {
    * bill, and never a substitute for one.
    */
   costPerMillionTokens?: number
-  /**
-   * Read-only mirror of the subagent providers registered at boot, for the
-   * card's provider suggestions.
-   *
-   * A BOOT SNAPSHOT: the settings seam has no way to update a base layer after
-   * composition, so a provider registered later will not appear until restart.
-   * That is why the field feeds a `datalist` and not a `<select>` — the list is
-   * a hint, never the set of legal values.
-   */
-  availableProviders?: string[]
   /** User overlay, keyed by preset id. */
   overrides?: Record<string, PresetOverride>
 }

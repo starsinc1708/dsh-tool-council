@@ -46,8 +46,6 @@ export interface CouncilCardState {
   readonly overrides: Record<string, PresetOverride>
   /** The deployment's per-layer width ceiling, mirrored by the Host. */
   readonly maxAgentsPerLayer: number
-  /** Provider names registered at boot, for the card's suggestions. */
-  readonly availableProviders: readonly string[]
   /** Blended $ per 1M tokens for the Council tab's estimate; 0 means off. */
   readonly costPerMillionTokens: number
   /** Agents one run of the shown preset would start, with the staging applied. */
@@ -79,7 +77,6 @@ const EMPTY: CouncilCardState = {
   defaultPreset: '',
   overrides: {},
   maxAgentsPerLayer: 0,
-  availableProviders: [],
   costPerMillionTokens: 0,
   totalAgents: 0,
   widthViolations: [],
@@ -468,7 +465,6 @@ export class CouncilCardController {
       defaultPreset: this.stagedDefault ?? snapshot.value?.defaultPreset ?? first,
       overrides,
       maxAgentsPerLayer,
-      availableProviders: snapshot.value?.availableProviders ?? [],
       costPerMillionTokens: this.stagedCost ?? snapshot.value?.costPerMillionTokens ?? 0,
       totalAgents: shown === undefined ? 0 : shown.layers.reduce(
         (total, layer) => total + layer.roles.reduce(

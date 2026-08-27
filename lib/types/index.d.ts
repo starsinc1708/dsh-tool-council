@@ -88,6 +88,36 @@ export declare const Config: z<Config>;
  */
 export declare function composeRows(pluginName: string, toolConfig: string): string;
 /**
+ * The composition facts a user layer may not shadow, captured once.
+ *
+ * Captured — not recomputed — on purpose. `validate` runs LATER than `apply`
+ * (inside `ctx.inject(['settings'], …)`), so anything read from the live
+ * context inside it can legitimately differ from what the base layer recorded.
+ * When it does, `validate` throws, `register` throws, and the inject callback's
+ * rejection is swallowed: the namespace silently never registers and every
+ * surface that depends on it — the settings card above all — just disappears,
+ * with no error in any log. Passing the values in makes that mistake
+ * unexpressible.
+ */
+export interface CouncilMirrors {
+    /** `JSON.stringify` of the composition's topology projection. */
+    readonly topologyJson: string;
+    readonly maxAgentsPerLayer: number;
+    readonly agentPresetId: string;
+}
+/**
+ * Refuse a user layer that shadows a composition mirror.
+ *
+ * The card reads all three: `topology` decides which roles and widths it draws,
+ * `maxAgentsPerLayer` its ceiling check, `agentPresetId` the Council tab's gate.
+ * Shadowing any of them would move what the card believes without moving what
+ * the tool runs.
+ * @param value - the resolved section (composition base under the user layer).
+ * @param mirrors - the composition's own values, captured at registration.
+ * @throws TypeError naming the field a user layer tried to set.
+ */
+export declare function assertMirrorsUnchanged(value: CouncilSettings, mirrors: CouncilMirrors): void;
+/**
  * Register the host row: own the `council` settings namespace and publish the
  * Map-Reduce preset.
  * @param ctx - the plugin context; the roster and settings are read optionally.

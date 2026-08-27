@@ -40,8 +40,6 @@ export interface CouncilCardState {
     readonly overrides: Record<string, PresetOverride>;
     /** The deployment's per-layer width ceiling, mirrored by the Host. */
     readonly maxAgentsPerLayer: number;
-    /** Provider names registered at boot, for the card's suggestions. */
-    readonly availableProviders: readonly string[];
     /** Blended $ per 1M tokens for the Council tab's estimate; 0 means off. */
     readonly costPerMillionTokens: number;
     /** Agents one run of the shown preset would start, with the staging applied. */

@@ -102,7 +102,6 @@ export const CouncilSettingsSchema: z<CouncilSettings> = z.object({
   maxAgentsPerLayer: z.number().step(1).min(1).max(64).default(12),
   agentPresetId: z.string().default('map-reduce'),
   costPerMillionTokens: z.number().min(0).max(10_000).default(0),
-  availableProviders: z.array(z.string()).default([]),
   overrides: z.dict(PresetOverrideSchema).default({}),
 }) as unknown as z<CouncilSettings>
 
@@ -175,26 +174,45 @@ function toolConfigOf(policy: unknown): string {
   return dump(policy, { noRefs: true, lineWidth: -1 }).trimEnd()
 }
 
-/** The slice of `ctx.subagents` this row reads, when the plane carries one. */
-interface SubagentsLike {
-  list(): string[]
+/**
+ * The composition facts a user layer may not shadow, captured once.
+ *
+ * Captured — not recomputed — on purpose. `validate` runs LATER than `apply`
+ * (inside `ctx.inject(['settings'], …)`), so anything read from the live
+ * context inside it can legitimately differ from what the base layer recorded.
+ * When it does, `validate` throws, `register` throws, and the inject callback's
+ * rejection is swallowed: the namespace silently never registers and every
+ * surface that depends on it — the settings card above all — just disappears,
+ * with no error in any log. Passing the values in makes that mistake
+ * unexpressible.
+ */
+export interface CouncilMirrors {
+  /** `JSON.stringify` of the composition's topology projection. */
+  readonly topologyJson: string
+  readonly maxAgentsPerLayer: number
+  readonly agentPresetId: string
 }
 
 /**
- * Snapshot the registered subagent provider names for the card's suggestions.
+ * Refuse a user layer that shadows a composition mirror.
  *
- * Optional on purpose: this row is dependency-free and sits on the host plane,
- * where the subagent registry may not be published at all. An empty list simply
- * means the card suggests nothing and the field stays free text.
- * @param ctx - the host row's plugin context.
- * @returns the provider names, or an empty list.
+ * The card reads all three: `topology` decides which roles and widths it draws,
+ * `maxAgentsPerLayer` its ceiling check, `agentPresetId` the Council tab's gate.
+ * Shadowing any of them would move what the card believes without moving what
+ * the tool runs.
+ * @param value - the resolved section (composition base under the user layer).
+ * @param mirrors - the composition's own values, captured at registration.
+ * @throws TypeError naming the field a user layer tried to set.
  */
-function registeredProviders(ctx: Context): string[] {
-  try {
-    return (ctx.get('subagents') as SubagentsLike | undefined)?.list() ?? []
-  } catch {
-    /* v8 ignore next -- a registry that throws on enumeration is not worth failing boot over. */
-    return []
+export function assertMirrorsUnchanged(value: CouncilSettings, mirrors: CouncilMirrors): void {
+  if (value.maxAgentsPerLayer !== undefined && value.maxAgentsPerLayer !== mirrors.maxAgentsPerLayer) {
+    throw new TypeError('council: maxAgentsPerLayer mirrors the composition and cannot be set here')
+  }
+  if (value.agentPresetId !== undefined && value.agentPresetId !== mirrors.agentPresetId) {
+    throw new TypeError('council: agentPresetId mirrors the composition and cannot be set here')
+  }
+  if (value.topology !== undefined && JSON.stringify(value.topology) !== mirrors.topologyJson) {
+    throw new TypeError('council: topology mirrors the composition and cannot be set here')
   }
 }
 
@@ -214,7 +232,11 @@ export function apply(ctx: Context, config: Config): void {
   // on, so it is mirrored either way.
   const presetId = config.presetId ?? 'map-reduce'
   const baseTopology = toTopology(policy.presets)
-  const baseTopologyJson = JSON.stringify(baseTopology)
+  const mirrors: CouncilMirrors = {
+    topologyJson: JSON.stringify(baseTopology),
+    maxAgentsPerLayer: policy.maxAgentsPerLayer,
+    agentPresetId: presetId,
+  }
 
   // The user plane may widen or narrow a role and re-route its model; it may
   // not change the topology. It lives in the `council` namespace, which this
@@ -227,7 +249,6 @@ export function apply(ctx: Context, config: Config): void {
     // this deployment actually published rather than the shipped default.
     maxAgentsPerLayer: policy.maxAgentsPerLayer,
     agentPresetId: presetId,
-    availableProviders: registeredProviders(ctx),
     overrides: {},
   }, {
     // This row OWNS the section but does not consume it — the tool row reads
@@ -237,25 +258,7 @@ export function apply(ctx: Context, config: Config): void {
     // Refuse the write, not the next call: an overlay that pushes a layer past
     // maxAgentsPerLayer must fail in the settings UI where the user can see it.
     validate: (value) => {
-      // All THREE mirrors describe the composition, not a preference, and the
-      // card reads every one of them: `topology` decides which roles and widths
-      // it draws, `maxAgentsPerLayer` its ceiling check, `agentPresetId` the
-      // Council tab's gate. A user layer shadowing any of them would move what
-      // the card believes without moving what the tool runs, so refuse the
-      // write. `topology` is compared structurally because it is an array.
-      if (value.maxAgentsPerLayer !== undefined && value.maxAgentsPerLayer !== policy.maxAgentsPerLayer) {
-        throw new TypeError('council: maxAgentsPerLayer mirrors the composition and cannot be set here')
-      }
-      if (value.agentPresetId !== undefined && value.agentPresetId !== presetId) {
-        throw new TypeError('council: agentPresetId mirrors the composition and cannot be set here')
-      }
-      if (value.topology !== undefined && JSON.stringify(value.topology) !== baseTopologyJson) {
-        throw new TypeError('council: topology mirrors the composition and cannot be set here')
-      }
-      if (value.availableProviders !== undefined
-        && JSON.stringify(value.availableProviders) !== JSON.stringify(registeredProviders(ctx))) {
-        throw new TypeError('council: availableProviders mirrors the composition and cannot be set here')
-      }
+      assertMirrorsUnchanged(value, mirrors)
       void resolveConfig({
         ...(config.councilPolicy ?? {}),
         presets: applyOverrides(policy.presets, value.overrides),
