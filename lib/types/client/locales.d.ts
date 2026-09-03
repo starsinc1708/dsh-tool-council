@@ -188,6 +188,7 @@ export declare const en: {
     'designer.noSavedPresets': string;
     'designer.deletePreset': string;
     'designer.saveRole': string;
+    'designer.singleInstance': string;
     'designer.clearDisabledHint': string;
     'designer.customError': string;
     'custom.mapNode': string;

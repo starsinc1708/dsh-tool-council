@@ -319,8 +319,9 @@ export function applySessionSetup(
   const authorOf = (layerId: string): SessionRoleAuthor[] => setup.addRoles?.[layerId] ?? []
 
   // 1. Existing layers: tuned; map and verify additionally receive authored
-  //    roles. The reduce layer is left alone — a setup that tries to widen it
-  //    names its own mistake.
+  //    roles. The reduce layer keeps its single instance but MAY be re-routed:
+  //    pointing the synthesizer at a stronger model is the sanctioned way to
+  //    strengthen it.
   const kept = preset.layers
     .filter(layer => !layerDropped(layer.kind, setup))
     .map((layer) => {
@@ -334,7 +335,7 @@ export function applySessionSetup(
             )
           }
         }
-        return layer
+        return { ...layer, roles: layer.roles.map(tuneRole(layer.id)) }
       }
       const tuned = layer.roles.map(tuneRole(layer.id))
       const authored = (layer.kind === 'map' || layer.kind === 'verify')

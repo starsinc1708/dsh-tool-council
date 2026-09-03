@@ -133,6 +133,19 @@ describe('applySessionSetup', () => {
     expect(composed.layers.map(layer => layer.kind)).toEqual(['map', 'reduce'])
   })
 
+  it('routes the single synthesizer to a stronger model while keeping one instance', () => {
+    const composed = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      roles: { 'reduce.synthesizer': { model: 'strong-model', provider: 'premium-route' } },
+    }, 100)
+    expect(composed.layers[2]?.roles[0]).toMatchObject({ model: 'strong-model', provider: 'premium-route' })
+    // The count override is still refused.
+    expect(() => applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      roles: { 'reduce.synthesizer': { count: 2 } },
+    }, 100)).toThrow(/exactly one instance/)
+  })
+
   it('restates the quorum only when the session overrides it', () => {
     const majority = applySessionSetup(preset, {
       presetId: 'bug-hunt',

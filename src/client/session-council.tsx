@@ -740,7 +740,7 @@ function RoleRow(props: {
     <div className={css.roleRow} data-role="">
       <span className={css.roleLabel} title={label}>{label}</span>
       {kind === 'reduce' ? (
-        <span className={css.fixedOne}>1×</span>
+        <span className={css.fixedOne} title={t('designer.singleInstance')}>1×</span>
       ) : (
         <CountStepper
           value={row.count}
@@ -749,15 +749,13 @@ function RoleRow(props: {
           t={t}
         />
       )}
-      {kind === 'reduce' ? null : (
-        <ModelPicker
-          value={{ provider: row.provider, model: row.model }}
-          models={models}
-          onPick={({ provider, model }) => sink.route(provider, model)}
-          disabled={!maxWidth}
-          t={t}
-        />
-      )}
+      <ModelPicker
+        value={{ provider: row.provider, model: row.model }}
+        models={models}
+        onPick={({ provider, model }) => sink.route(provider, model)}
+        disabled={!maxWidth}
+        t={t}
+      />
       {!editable ? null : (
         <span className={css.roleActions}>
           <button
