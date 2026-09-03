@@ -204,6 +204,20 @@ export function setRoutePair(draft: CouncilDraft, key: string, provider: string,
   return { ...draft, roles }
 }
 
+/**
+ * Override one EXISTING role's prompt for this session. Empty text removes
+ * the override and re-inherits the composed prompt.
+ */
+export function setPromptTune(draft: CouncilDraft, key: string, prompt: string): CouncilDraft {
+  const roles = { ...draft.roles }
+  const entry = { ...roles[key] }
+  if (prompt.trim() === '') delete entry.prompt
+  else entry.prompt = prompt
+  if (Object.keys(entry).length === 0) delete roles[key]
+  else roles[key] = entry
+  return { ...draft, roles }
+}
+
 /** Toggle the verify layer (preset-anchored drafts). */
 export function setVerify(draft: CouncilDraft, presetHasVerify: boolean, enabled: boolean): CouncilDraft {
   return {
@@ -449,6 +463,7 @@ export function projectSetup(preset: TopologyPreset | undefined, draft: CouncilD
     if (tune.provider !== undefined && tune.provider !== '' && tune.provider !== baseline.provider) {
       out.provider = tune.provider
     }
+    if (tune.prompt !== undefined && tune.prompt.trim() !== '') out.prompt = tune.prompt
     if (Object.keys(out).length > 0) roles[key] = out
   }
   const hasVerify = preset?.layers.some(layer => layer.kind === 'verify') === true
@@ -621,6 +636,9 @@ export class SessionCouncilController {
       setRoutePair: (key: string, provider: string, model: string) => {
         this.edit(draft => setRoutePair(draft, key, provider, model))
       },
+      setPrompt: (key: string, prompt: string) => {
+        this.edit(draft => setPromptTune(draft, key, prompt))
+      },
       setVerify: (enabled: boolean) => {
         const preset = presetOf(this.snapshot.presets, this.snapshot.draft.presetId)
         this.edit(draft => setVerify(draft, this.hasVerifyOf(preset), enabled))
@@ -714,17 +732,33 @@ export class SessionCouncilController {
 
   private async save(): Promise<void> {
     if (this.snapshot.dirty === false) return
-    if (this.snapshot.customError !== undefined) return
-    if (this.snapshot.widthViolations.length > 0 || this.snapshot.quorumViolation !== undefined) return
+    // Blocked saves are reported, never silent: the chip would otherwise stay
+    // on with no visible reason.
+    if (this.snapshot.customError !== undefined) {
+      this.error = this.partialSaveMessage(this.snapshot.customError)
+      this.publish()
+      return
+    }
+    if (this.snapshot.widthViolations.length > 0 || this.snapshot.quorumViolation !== undefined) {
+      this.error = this.partialSaveMessage('layer width or quorum ceiling reached')
+      this.publish()
+      return
+    }
     try {
       await this.writeSetup(this.snapshot.staged)
       this.draft = undefined
       this.error = ''
+      this.publish()
+      // A landed save is by definition not dirty. The equality round-trip
+      // should agree, but force the flag anyway so a normalization nuance can
+      // never leave the "unsaved changes" chip lit after a successful write.
+      this.snapshot = { ...this.snapshot, dirty: false, hasStored: true }
+      for (const listener of this.listeners) listener()
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       this.error = this.partialSaveMessage(message)
+      this.publish()
     }
-    this.publish()
   }
 
   /** Write one session's setup into the `sessionCouncil` field. */

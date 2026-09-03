@@ -193,6 +193,15 @@ function CouncilDesigner(props: DockProps) {
   )
   useEffect(() => () => { controller.dispose() }, [controller])
 
+  // The designer matters before the session starts running: once a request
+  // has been sent (or one is in flight) the expanded form is noise, so
+  // collapse it. The compact header stays, so the setup can still be opened
+  // between runs.
+  const sessionEngaged = props.session.blank === false || props.session.running === true
+  useEffect(() => {
+    if (sessionEngaged) setOpen(false)
+  }, [sessionEngaged])
+
   const [models] = useState<ModelDirectoryLike | undefined>(() =>
     modelDirectories?.directoryFor(sessionId))
 
@@ -592,6 +601,8 @@ function LayerNode({
                     model: row.model,
                   })
                 }}
+                overridePrompt={editable ? undefined : (draft.roles[row.key]?.prompt ?? '')}
+                onPromptOverride={editable ? undefined : (text) => { actions.setPrompt(row.key, text) }}
               />
             )
           })}
@@ -732,8 +743,12 @@ function RoleRow(props: {
   models?: ModelDirectoryLike
   t: L
   onSaveRole: () => void
+  /** Current prompt override for a DEFAULT (non-authored) role, if any. */
+  overridePrompt?: string
+  /** Commit a prompt override for a default role ('' reverts to composed). */
+  onPromptOverride?: (text: string) => void
 }) {
-  const { row, kind, sink, editable, maxWidth, models, t, onSaveRole } = props
+  const { row, kind, sink, editable, maxWidth, models, t, onSaveRole, overridePrompt, onPromptOverride } = props
   const [editing, setEditing] = useState(false)
   const label = row.label === '' ? row.roleId : row.label
   return (
@@ -756,7 +771,19 @@ function RoleRow(props: {
         disabled={!maxWidth}
         t={t}
       />
-      {!editable ? null : (
+      {!editable ? (
+        <span className={css.roleActions}>
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('designer.editPrompt')}
+            title={t('designer.editPrompt')}
+            onClick={() => { setEditing(!editing) }}
+          >
+            ✎
+          </button>
+        </span>
+      ) : (
         <span className={css.roleActions}>
           <button
             type="button"
@@ -789,11 +816,17 @@ function RoleRow(props: {
           )}
         </span>
       )}
-      {!editing || !editable ? null : (
+      {!editing ? null : editable ? (
         <AuthoredRoleForm
           initialLabel={row.label}
           initialPrompt={row.prompt ?? ''}
           onPatch={sink.patch}
+          t={t}
+        />
+      ) : (
+        <PromptTuneForm
+          initial={overridePrompt ?? ''}
+          onChange={onPromptOverride ?? (() => {})}
           t={t}
         />
       )}
@@ -1053,6 +1086,28 @@ function AuthoredRoleForm(props: {
         placeholder={t('designer.promptSeed', { role: label })}
         onChange={(event) => { setPrompt(event.target.value); onPatch({ prompt: event.target.value }) }}
       />
+    </div>
+  )
+}
+
+/** Prompt override editor for an EXISTING (default) role; empty reverts. */
+function PromptTuneForm(props: {
+  initial: string
+  onChange: (text: string) => void
+  t: L
+}) {
+  const { initial, onChange, t } = props
+  const [value, setValue] = useState(initial)
+  return (
+    <div className={css.authForm}>
+      <textarea
+        className={css.promptInput}
+        rows={6}
+        value={value}
+        placeholder={t('designer.promptTunePlaceholder')}
+        onChange={(event) => { setValue(event.target.value); onChange(event.target.value) }}
+      />
+      <span className={css.hint}>{t('designer.promptTuneHint')}</span>
     </div>
   )
 }

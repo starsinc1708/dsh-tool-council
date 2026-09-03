@@ -94,6 +94,11 @@ export declare function baselineOf(preset: TopologyPreset, key: string): Baselin
 export declare function setCount(draft: CouncilDraft, key: string, count: number): CouncilDraft;
 /** Point one existing role at a provider + model pair ('' clears). */
 export declare function setRoutePair(draft: CouncilDraft, key: string, provider: string, model: string): CouncilDraft;
+/**
+ * Override one EXISTING role's prompt for this session. Empty text removes
+ * the override and re-inherits the composed prompt.
+ */
+export declare function setPromptTune(draft: CouncilDraft, key: string, prompt: string): CouncilDraft;
 /** Toggle the verify layer (preset-anchored drafts). */
 export declare function setVerify(draft: CouncilDraft, presetHasVerify: boolean, enabled: boolean): CouncilDraft;
 /** Set the verify layer's quorum (preset-anchored drafts). */
@@ -221,6 +226,7 @@ export declare class SessionCouncilController {
         setName: (name: string) => void;
         setCount: (key: string, count: number) => void;
         setRoutePair: (key: string, provider: string, model: string) => void;
+        setPrompt: (key: string, prompt: string) => void;
         setVerify: (enabled: boolean) => void;
         setQuorum: (rule: QuorumRule, threshold?: number) => void;
         addRoleTo: (layerId: string, role: AuthoredRole) => void;

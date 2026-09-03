@@ -146,6 +146,21 @@ describe('applySessionSetup', () => {
     }, 100)).toThrow(/exactly one instance/)
   })
 
+  it('lets a session tune an existing role’s prompt, empty text inherits', () => {
+    const tuned = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      roles: { 'map.correctness': { prompt: 'Focus only on arithmetic overflow.' } },
+    }, 100)
+    expect(tuned.layers[0]?.roles[0]?.prompt).toBe('Focus only on arithmetic overflow.')
+
+    // Empty overrides are dropped: the composed prompt survives untouched.
+    const inherited = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      roles: { 'map.correctness': { prompt: '   ' } },
+    }, 100)
+    expect(inherited.layers[0]?.roles[0]?.prompt).toBe('lens one')
+  })
+
   it('restates the quorum only when the session overrides it', () => {
     const majority = applySessionSetup(preset, {
       presetId: 'bug-hunt',

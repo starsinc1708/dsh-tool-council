@@ -45,6 +45,12 @@ export interface SessionRoleTune {
     count?: number;
     model?: string;
     provider?: string;
+    /**
+     * Prompt override for an EXISTING role. Empty (or absent) inherits the
+     * composed prompt; a non-empty value replaces it for this session — the
+     * sanctioned way to slightly tune a default lens without copying the role.
+     */
+    prompt?: string;
 }
 /** A per-session quorum override for the verify layer. */
 export interface SessionQuorumTune {

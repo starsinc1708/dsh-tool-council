@@ -79,6 +79,7 @@ const SessionRoleTuneSchema: z<SessionRoleTune> = z.object({
   count: z.number().step(1).min(1).max(64),
   model: z.string(),
   provider: z.string(),
+  prompt: z.string(),
 })
 
 const SessionQuorumTuneSchema: z<SessionQuorumTune> = z.object({

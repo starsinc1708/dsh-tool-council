@@ -168,6 +168,9 @@ export declare const en: {
     'designer.promptSeed': string;
     'designer.layerCap': string;
     'designer.edit': string;
+    'designer.editPrompt': string;
+    'designer.promptTunePlaceholder': string;
+    'designer.promptTuneHint': string;
     'designer.removeRole': string;
     'designer.search': string;
     'designer.noModels': string;
