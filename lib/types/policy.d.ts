@@ -84,6 +84,8 @@ export interface ResolvedConfig {
     readonly presets: readonly PresetConfig[];
     readonly defaultPreset: PresetConfig;
     readonly maxAgentsPerLayer: number;
+    /** Ceiling on one preset's layer count — mirrored for the designer's layer gate. */
+    readonly maxLayers: number;
     readonly maxFindings: number;
     readonly maxFindingsPerMember: number;
     readonly maxFindingChars: number;

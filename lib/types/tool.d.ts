@@ -25,7 +25,7 @@ export { TASK_SNIPPET_CHARS, taskSnippet } from './recorder.ts';
 export { BUILTIN_PRESETS } from './presets.ts';
 export { Config, HARD_STOP_GRACE_MS, expandLayers, resolveConfig, totalAgentBudget } from './policy.ts';
 export type { ResolvedConfig } from './policy.ts';
-export { COUNCIL_NAMESPACE, applyOverrides } from './settings.ts';
+export { COUNCIL_NAMESPACE, applySessionSetup, sessionSetupOf } from './settings.ts';
 export { TABLE_LEGEND, applyQuorum, assertClustersWellFormed, capPerMember, dedupeFindings, fingerprint, mergeClusters, normalizeLocation, renderTable, tally, } from './tally.ts';
 export declare const name = "tool-council";
 export declare const inject: string[];

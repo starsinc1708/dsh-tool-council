@@ -277,8 +277,8 @@ export interface CouncilResultRecord {
  * reuse. `settings.ts` imports from here type-only, so this value re-export
  * introduces no runtime cycle.
  */
-export { COUNCIL_NAMESPACE, applyOverrides, toTopology } from './settings.ts'
+export { COUNCIL_NAMESPACE, toTopology } from './settings.ts'
 export type {
-  CouncilSettings, PresetOverride, QuorumOverride, RoleOverride,
-  TopologyLayer, TopologyPreset, TopologyRole,
+  CouncilSettings, PresetTemplate, RoleTemplate, SessionCouncilSetup, SessionLayerAuthor,
+  SessionQuorumTune, SessionRoleAuthor, SessionRoleTune, TopologyLayer, TopologyPreset, TopologyRole,
 } from './settings.ts'

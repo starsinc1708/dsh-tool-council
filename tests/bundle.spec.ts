@@ -105,20 +105,22 @@ describe('built client bundle', () => {
     expect(source).toContain('@starsinc1708/dsh-tool-council')
   })
 
-  it.runIf(existsSync(bundle))('registers the settings card when driven like the real loader', () => {
+  it.runIf(existsSync(bundle))('registers the dock designer and the Council view when driven like the real loader', () => {
     // The end-to-end proof: evaluate the SHIPPED artifact through the loader
     // protocol, resolve its requires from the seed table only, and apply it.
-    // A missing card in Settings -> Plugins is exactly a missing `council` key
-    // here, and the require shim below fails loudly on a module-table miss.
+    // A missing designer above the composer is exactly a missing
+    // `council-design` entry here, and the require shim below fails loudly on a
+    // module-table miss. There is deliberately NO Settings -> Plugins card.
     const loaded = loadBundle(readFileSync(bundle, 'utf8'))
     expect(loaded.id).toBe('@starsinc1708/dsh-tool-council')
     expect(loaded.exports.inject).toEqual(expect.arrayContaining(['slots', 'locale', 'settingsScope', 'sessions']))
 
     const registered: Array<{ name: string; key: string }> = []
     loaded.exports.apply(stubClientContext(registered))
-    // The plugins tab shows a namespace only when a card is registered under
-    // its key AND the host serves it; this is the half this package owns.
-    expect(registered).toContainEqual({ name: 'settings.plugin.item', key: 'council' })
+    // The council is configured per session in the composer dock, not in
+    // Settings -> Plugins; the results tab rides the conversation view ring.
+    expect(registered).not.toContainEqual({ name: 'settings.plugin.item', key: 'council' })
+    expect(registered).toContainEqual({ name: 'conversation.input.dock', key: 'council-design' })
     expect(registered).toContainEqual({ name: 'conversation.view', key: 'council' })
   })
 })

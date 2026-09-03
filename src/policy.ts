@@ -138,6 +138,8 @@ export interface ResolvedConfig {
   readonly presets: readonly PresetConfig[]
   readonly defaultPreset: PresetConfig
   readonly maxAgentsPerLayer: number
+  /** Ceiling on one preset's layer count — mirrored for the designer's layer gate. */
+  readonly maxLayers: number
   readonly maxFindings: number
   readonly maxFindingsPerMember: number
   readonly maxFindingChars: number
@@ -212,6 +214,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     presets,
     defaultPreset,
     maxAgentsPerLayer,
+    maxLayers,
     maxFindings: config.maxFindings ?? 200,
     maxFindingsPerMember: config.maxFindingsPerMember ?? 50,
     maxFindingChars: config.maxFindingChars ?? 2_000,

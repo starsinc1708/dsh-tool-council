@@ -28,14 +28,14 @@ function referencedClasses(tsxPath: string): Set<string> {
 
 const PAIRS: ReadonlyArray<{ readonly name: string; readonly tsx: string; readonly css: string }> = [
   {
-    name: 'CouncilCard',
-    tsx: 'src/client/CouncilCard.tsx',
-    css: 'src/client/CouncilCard.module.css',
-  },
-  {
     name: 'council-view',
     tsx: 'src/client/council-view.tsx',
     css: 'src/client/council-view.module.css',
+  },
+  {
+    name: 'session-council',
+    tsx: 'src/client/session-council.tsx',
+    css: 'src/client/session-council.module.css',
   },
 ]
 

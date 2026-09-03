@@ -9,7 +9,7 @@
  * browser bundle only for an entry whose name IS the package name: it resolves
  * `<entry>/package.json`, which a subpath row like `dsh-tool-council/tool` can
  * never satisfy. So the row that is always composed has to be the bare one, or
- * the settings card is never served.
+ * the browser bundle (the session designer, the Council tab) is never served.
  *
  * That fixes the split: bare name → this host row (preset publication, settings
  * ownership, browser bundle carrier); `./tool` subpath → the model-facing tool,
@@ -17,9 +17,9 @@
  *
  * This row registers no tool and no prompt section, so composing it costs the
  * model nothing in any mode. It owns the `council` settings namespace: the
- * section lives on the always-composed host plane, so the browser card can
- * reach it in every mode, and the tool row (agent plane, mounted by the
- * published preset) reads it at call time.
+ * section lives on the always-composed host plane, so the composer-dock
+ * designer and the Council tab can reach it in every mode, and the tool row
+ * (agent plane, mounted by the published preset) reads it at call time.
  *
  * @module @starsinc1708/dsh-tool-council
  */
@@ -54,19 +54,19 @@ export interface Config {
     presetPluginName?: string;
     /**
      * The council's deployment policy — the tool's own configuration. Owned here,
-     * on the always-composed row, so the settings card can mirror the deployment's
-     * real topology in every mode and the published preset can mount the tool
-     * with the same policy. Omitted → the tool's schema defaults (the four
-     * shipped topologies, `spawn`, `council`, default ceilings).
+     * on the always-composed row, so the composer-dock designer can mirror the
+     * deployment's real topology in every mode and the published preset can mount
+     * the tool with the same policy. Omitted → the tool's schema defaults (the
+     * four shipped topologies, `spawn`, `council`, default ceilings).
      */
     councilPolicy?: CouncilConfig;
 }
 /**
- * User-plane schema for the `council` settings section. `topology`,
- * `maxAgentsPerLayer`, and `agentPresetId` are written by the composition as
- * the section's `base` layer and are never user fields; they exist so the
- * settings card can render the deployment's real layers and refuse an
- * over-wide overlay before the write, and so the Council tab can gate on the
+ * Schema for the `council` settings section. `topology`, `maxAgentsPerLayer`,
+ * and `agentPresetId` are written by the composition as the section's `base`
+ * layer and are never user fields; they exist so the composer-dock designer
+ * can render the deployment's real presets and layers and refuse an over-wide
+ * session setup before the write, and so the Council tab can gate on the
  * preset id this deployment actually published.
  */
 export declare const CouncilSettingsSchema: z<CouncilSettings>;
@@ -95,23 +95,25 @@ export declare function composeRows(pluginName: string, toolConfig: string): str
  * context inside it can legitimately differ from what the base layer recorded.
  * When it does, `validate` throws, `register` throws, and the inject callback's
  * rejection is swallowed: the namespace silently never registers and every
- * surface that depends on it — the settings card above all — just disappears,
- * with no error in any log. Passing the values in makes that mistake
- * unexpressible.
+ * surface that depends on it — the session designer and the Council tab above
+ * all — just disappears, with no error in any log. Passing the values in makes
+ * that mistake unexpressible.
  */
 export interface CouncilMirrors {
     /** `JSON.stringify` of the composition's topology projection. */
     readonly topologyJson: string;
     readonly maxAgentsPerLayer: number;
+    readonly maxLayers: number;
     readonly agentPresetId: string;
+    readonly defaultPresetId: string;
 }
 /**
  * Refuse a user layer that shadows a composition mirror.
  *
- * The card reads all three: `topology` decides which roles and widths it draws,
- * `maxAgentsPerLayer` its ceiling check, `agentPresetId` the Council tab's gate.
- * Shadowing any of them would move what the card believes without moving what
- * the tool runs.
+ * The designer reads all three: `topology` decides which presets and layers it
+ * draws, `maxAgentsPerLayer` its ceiling checks, `agentPresetId` the Council
+ * tab's gate. Shadowing any of them would move what the surfaces believe
+ * without moving what the tool runs.
  * @param value - the resolved section (composition base under the user layer).
  * @param mirrors - the composition's own values, captured at registration.
  * @throws TypeError naming the field a user layer tried to set.

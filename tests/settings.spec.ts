@@ -1,16 +1,21 @@
 /**
- * Tests for the settings overlay: the composition mirror the card draws from,
- * and the overlay the tool applies on every call. `applyOverrides` is the one
- * place a user preference reaches a live topology, so what it refuses matters
- * as much as what it applies — an overlay must never be able to change a
- * topology, only its widths, routes and quorum.
+ * Tests for the per-session council setup: the mirrored topology the designer
+ * draws from, and the composition the tool applies on every call.
+ * `applySessionSetup` is the one place a session's preference reaches a live
+ * topology, so what it refuses matters as much as what it applies — a setup
+ * must never be able to change a topology, only widths, routes, the verify
+ * layer's presence, and its quorum.
  */
 
 import { describe, expect, it } from 'vitest'
-import { applyOverrides, toTopology } from '../src/settings.ts'
+import {
+  MAX_ROLE_WIDTH, applySessionSetup, layerDropped, sessionQuorumViolation, sessionWidthViolations,
+  toTopology, tunedCount,
+} from '../src/settings.ts'
 import { BUILTIN_PRESETS } from '../src/presets.ts'
 import { resolveConfig } from '../src/policy.ts'
 import type { PresetConfig } from '../src/types.ts'
+import type { SessionCouncilSetup } from '../src/settings.ts'
 
 const preset: PresetConfig = {
   id: 'bug-hunt',
@@ -36,6 +41,19 @@ const preset: PresetConfig = {
   ],
 }
 
+const noVerify: PresetConfig = {
+  ...preset,
+  id: 'research',
+  layers: [
+    {
+      id: 'map',
+      kind: 'map',
+      roles: [{ id: 'prior-art', prompt: 'find prior work' }],
+    },
+    { id: 'reduce', kind: 'reduce', roles: [{ id: 'synthesizer', prompt: 'write it' }] },
+  ],
+}
+
 describe('toTopology', () => {
   it('projects labels, widths and routes, defaulting what the composition left out', () => {
     const [mirrored] = toTopology([preset])
@@ -43,7 +61,7 @@ describe('toTopology', () => {
     expect(mirrored?.layers[0]?.roles).toEqual([
       { id: 'correctness', label: 'Correctness', count: 2, model: '', provider: '' },
       // Absent label falls back to the id; absent route becomes '', which is
-      // what the card renders as "inherit".
+      // what the designer renders as "inherit".
       { id: 'tests', label: 'tests', count: 1, model: 'composed-model', provider: '' },
     ])
   })
@@ -67,78 +85,183 @@ describe('toTopology', () => {
   })
 })
 
-describe('applyOverrides', () => {
-  it('returns the presets untouched when there is no overlay', () => {
-    expect(applyOverrides([preset], undefined)).toEqual([preset])
-    expect(applyOverrides([preset], {})).toEqual([preset])
+describe('tunedCount', () => {
+  it('keeps the composed width without a tune', () => {
+    expect(tunedCount(2, undefined)).toBe(2)
+    expect(tunedCount(undefined, undefined)).toBe(1)
   })
 
-  it('applies width, model and provider to the named role only', () => {
-    const [overlaid] = applyOverrides([preset], {
-      'bug-hunt': { roles: { 'map.correctness': { count: 5, model: 'routed', provider: 'codex' } } },
-    })
-    expect(overlaid?.layers[0]?.roles[0]).toMatchObject({ count: 5, model: 'routed', provider: 'codex' })
-    expect(overlaid?.layers[0]?.roles[1]?.count).toBeUndefined()
+  it('treats an out-of-range count as absent rather than as a request', () => {
+    for (const bad of [0, -1, 1.5, MAX_ROLE_WIDTH + 1]) {
+      expect(tunedCount(2, { count: bad })).toBe(2)
+    }
+  })
+})
+
+describe('layerDropped', () => {
+  it('drops only the verify layer, and only when verifyEnabled is false', () => {
+    expect(layerDropped('map', undefined)).toBe(false)
+    expect(layerDropped('verify', undefined)).toBe(false)
+    expect(layerDropped('verify', { presetId: 'bug-hunt', verifyEnabled: false })).toBe(true)
+    expect(layerDropped('verify', { presetId: 'bug-hunt', verifyEnabled: true })).toBe(false)
+    expect(layerDropped('map', { presetId: 'bug-hunt', verifyEnabled: false })).toBe(false)
+  })
+})
+
+describe('applySessionSetup', () => {
+  it('returns the preset untouched without a setup', () => {
+    expect(applySessionSetup(preset, undefined, 100)).toBe(preset)
   })
 
-  it('treats an empty route as inherit rather than as an override', () => {
-    const [overlaid] = applyOverrides([preset], {
-      'bug-hunt': { roles: { 'map.tests': { model: '', provider: '' } } },
-    })
-    // The composed model survives; '' must not overwrite it with nothing.
-    expect(overlaid?.layers[0]?.roles[1]?.model).toBe('composed-model')
+  it('applies absolute counts and routes to the named roles only', () => {
+    const setup: SessionCouncilSetup = {
+      presetId: 'bug-hunt',
+      roles: {
+        'map.correctness': { count: 5, model: 'routed', provider: 'codex' },
+      },
+    }
+    const composed = applySessionSetup(preset, setup, 100)
+    expect(composed.layers[0]?.roles[0]).toMatchObject({ count: 5, model: 'routed', provider: 'codex' })
+    // Untouched role keeps its composed model and its implicit (absent) width.
+    expect(composed.layers[0]?.roles[1]).toMatchObject({ model: 'composed-model' })
+    expect(composed.layers[0]?.roles[1]?.count).toBeUndefined()
+    expect(composed.layers[1]?.roles[0]?.count).toBe(3)
   })
 
-  it('overrides a quorum rule and threshold, keeping what the overlay omits', () => {
-    const [overlaid] = applyOverrides([preset], {
-      'bug-hunt': { quorums: { verify: { rule: 'threshold', threshold: 2 } } },
-    })
-    expect(overlaid?.layers[1]?.quorum).toEqual({ rule: 'threshold', threshold: 2 })
-
-    const [ruleOnly] = applyOverrides([preset], { 'bug-hunt': { quorums: { verify: { rule: 'unanimous' } } } })
-    expect(ruleOnly?.layers[1]?.quorum).toEqual({ rule: 'unanimous' })
+  it('drops the verify layer when verifyEnabled is false', () => {
+    const composed = applySessionSetup(preset, { presetId: 'bug-hunt', verifyEnabled: false }, 100)
+    expect(composed.layers.map(layer => layer.kind)).toEqual(['map', 'reduce'])
   })
 
-  it('ignores a quorum aimed at a layer that has none', () => {
-    const [overlaid] = applyOverrides([preset], {
-      'bug-hunt': { quorums: { map: { rule: 'unanimous' } } },
-    })
-    // A quorum on a map layer is a topology change, and resolveConfig refuses
-    // one — so the overlay must not be able to introduce it either.
-    expect(overlaid?.layers[0]?.quorum).toBeUndefined()
+  it('restates the quorum only when the session overrides it', () => {
+    const majority = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      roles: { 'verify.V1': { count: 4 } },
+      quorum: { rule: 'threshold', threshold: 2 },
+    }, 100)
+    expect(majority.layers[1]?.quorum).toEqual({ rule: 'threshold', threshold: 2 })
+
+    const unchanged = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      quorum: { rule: 'majority' },
+    }, 100)
+    expect(unchanged.layers[1]?.quorum).toEqual({ rule: 'majority' })
   })
 
-  it('ignores stale preset, layer and role keys instead of refusing the document', () => {
-    const [overlaid] = applyOverrides([preset], {
-      'gone-preset': { roles: { 'map.correctness': { count: 9 } } },
-      'bug-hunt': { roles: { 'gone-layer.role': { count: 9 }, 'map.gone-role': { count: 9 } } },
-    })
-    // A user document has to survive a composition that dropped a role.
-    expect(overlaid?.layers[0]?.roles[0]?.count).toBe(2)
+  it('refuses a setup that would push a layer past the ceiling', () => {
+    // map width after the tune: 5 + 1 = 6; ceiling 5 refuses, 6 accepts.
+    const setup: SessionCouncilSetup = { presetId: 'bug-hunt', roles: { 'map.correctness': { count: 5 } } }
+    expect(() => applySessionSetup(preset, setup, 5)).toThrow(/at most 5 per layer/)
+    expect(() => applySessionSetup(preset, setup, 6)).not.toThrow()
   })
 
-  it('cannot add, remove or reorder a layer or a role', () => {
-    const [overlaid] = applyOverrides([preset], {
-      'bug-hunt': { roles: { 'map.correctness': { count: 5 } }, quorums: { verify: { rule: 'unanimous' } } },
-    })
-    expect(overlaid?.layers.map(layer => layer.id)).toEqual(['map', 'verify', 'reduce'])
-    expect(overlaid?.layers.map(layer => layer.kind)).toEqual(['map', 'verify', 'reduce'])
-    expect(overlaid?.layers[0]?.roles.map(role => role.id)).toEqual(['correctness', 'tests'])
-    expect(overlaid?.framing).toBe(preset.framing)
+  it('refuses a threshold its own width cannot reach', () => {
+    const setup: SessionCouncilSetup = {
+      presetId: 'bug-hunt',
+      roles: { 'verify.V1': { count: 2 } },
+      quorum: { rule: 'threshold', threshold: 3 },
+    }
+    expect(() => applySessionSetup(preset, setup, 100)).toThrow(/threshold between 1 and its width 2/)
   })
 
-  it('produces presets the deployment policy still accepts, or refuses at the write', () => {
-    const widened = applyOverrides([preset], { 'bug-hunt': { roles: { 'map.correctness': { count: 4 } } } })
-    expect(() => resolveConfig({ presets: widened, defaultPreset: 'bug-hunt' })).not.toThrow()
+  it('refuses a setup that tries to widen the reduce role', () => {
+    const setup: SessionCouncilSetup = { presetId: 'bug-hunt', roles: { 'reduce.synthesizer': { count: 3 } } }
+    expect(() => applySessionSetup(preset, setup, 100)).toThrow(/exactly one instance/)
+  })
 
-    const overWide = applyOverrides([preset], { 'bug-hunt': { roles: { 'map.correctness': { count: 40 } } } })
-    expect(() => resolveConfig({ presets: overWide, defaultPreset: 'bug-hunt', maxAgentsPerLayer: 12 }))
-      .toThrow('exceeds maxAgentsPerLayer')
+  it('ignores stale role keys and presets with no verify stay valid', () => {
+    const composed = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      roles: { 'map.gone-role': { count: 9 }, 'verify.V1': { count: 4 } },
+    }, 100)
+    expect(composed.layers[0]?.roles.map(role => role.count)).toEqual([2, undefined])
+    expect(composed.layers[1]?.roles[0]?.count).toBe(4)
 
-    const badThreshold = applyOverrides([preset], {
-      'bug-hunt': { quorums: { verify: { rule: 'threshold', threshold: 9 } } },
-    })
-    expect(() => resolveConfig({ presets: badThreshold, defaultPreset: 'bug-hunt' }))
-      .toThrow('threshold between 1 and its width')
+    // verifyEnabled: false on a preset that has no verify layer is a no-op.
+    const research = applySessionSetup(noVerify, { presetId: 'research', verifyEnabled: false }, 100)
+    expect(research.layers.map(layer => layer.kind)).toEqual(['map', 'reduce'])
+  })
+
+  it('produces presets the deployment policy still accepts', () => {
+    const composed = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      roles: { 'map.correctness': { count: 4 } },
+      quorum: { rule: 'threshold', threshold: 2 },
+    }, 100)
+    expect(() => resolveConfig({ presets: [composed], defaultPreset: 'bug-hunt' })).not.toThrow()
+  })
+
+  it('appends authored roles and inserts authored map layers in DAG order', () => {
+    const composed = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      addRoles: {
+        map: [
+          { id: 'data-flow', label: 'Data flow', prompt: 'trace the data', count: 2 },
+        ],
+        verify: [{ id: 'V4', label: 'Fourth', prompt: 'double-check' }],
+      },
+      addLayers: [
+        { id: 'map-2', label: 'Second pass', roles: [{ id: 'logs', label: 'Logs', prompt: 'read the logs' }] },
+      ],
+    }, 100)
+    expect(composed.layers.map(layer => layer.id)).toEqual(['map', 'map-2', 'verify', 'reduce'])
+    expect(composed.layers[0]?.roles.map(role => role.id)).toEqual(['correctness', 'tests', 'data-flow'])
+    expect(composed.layers[1]?.kind).toBe('map')
+    expect(composed.layers[2]?.roles.map(role => role.id)).toEqual(['V1', 'V4'])
+    // The authored composition is fully validatable: unique ids, prompts,
+    // layer ordering and the quorum all hold.
+    expect(() => resolveConfig({ presets: [composed], defaultPreset: 'bug-hunt' })).not.toThrow()
+  })
+
+  it('drops authored verify roles together with the verify layer', () => {
+    const composed = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      verifyEnabled: false,
+      addRoles: { verify: [{ id: 'V9', label: 'Nine', prompt: 'vote' }] },
+    }, 100)
+    expect(composed.layers.map(layer => layer.id)).toEqual(['map', 'reduce'])
+  })
+
+  it('validates an authored topology like a composed one (duplicate id refused)', () => {
+    const composed = applySessionSetup(preset, {
+      presetId: 'bug-hunt',
+      addRoles: { map: [{ id: 'correctness', label: 'Copy', prompt: 'same id' }] },
+    }, 100)
+    expect(() => resolveConfig({ presets: [composed], defaultPreset: 'bug-hunt' }))
+      .toThrow(/duplicate role id/)
+  })
+})
+
+describe('mirror-side validation', () => {
+  const mirrored = toTopology([preset])[0]
+  if (mirrored === undefined) throw new Error('fixture')
+
+  it('finds layers a setup would push past the ceiling', () => {
+    expect(sessionWidthViolations(mirrored, undefined, 100)).toEqual([])
+    const violations = sessionWidthViolations(mirrored, {
+      presetId: 'bug-hunt',
+      roles: { 'map.correctness': { count: 40 } },
+    }, 12)
+    expect(violations).toEqual([
+      { layerId: 'map', width: 41, max: 12 },
+    ])
+    // Dropped layers never violate.
+    expect(sessionWidthViolations(mirrored, { presetId: 'bug-hunt', verifyEnabled: false }, 2)).toEqual([
+      { layerId: 'map', width: 3, max: 2 },
+    ])
+  })
+
+  it('matches the host refusal for an unreachable threshold', () => {
+    expect(sessionQuorumViolation(mirrored, undefined)).toBeUndefined()
+    expect(sessionQuorumViolation(mirrored, {
+      presetId: 'bug-hunt',
+      roles: { 'verify.V1': { count: 2 } },
+      quorum: { rule: 'threshold', threshold: 3 },
+    })).toEqual({ rule: 'threshold', threshold: 3, width: 2 })
+    expect(sessionQuorumViolation(mirrored, {
+      presetId: 'bug-hunt',
+      roles: { 'verify.V1': { count: 4 } },
+      quorum: { rule: 'threshold', threshold: 3 },
+    })).toBeUndefined()
   })
 })

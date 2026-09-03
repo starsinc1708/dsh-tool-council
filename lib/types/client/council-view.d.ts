@@ -15,7 +15,8 @@
  */
 import type { ClientContext, SettingsScope } from '@deepseek-ai/dsh-client-runtime/client';
 import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client';
-import type { CouncilResultRecord, CouncilSettings, PresetOverride, TopologyPreset } from '@starsinc1708/dsh-tool-council/types';
+import type { CouncilResultRecord } from '@starsinc1708/dsh-tool-council/types';
+import type { CouncilSettings } from '@starsinc1708/dsh-tool-council/types';
 import type { CouncilKey } from './locales.ts';
 /**
  * Status shown for a run, a phase, or a member.
@@ -36,11 +37,6 @@ export declare const VISIBLE_ROWS = 50;
  * @returns `12s`, `4:07`, or `1:02:03`.
  */
 export declare function formatDuration(ms: number): string;
-/** The settings fields the declared-width lookup reads. */
-interface TopologySettings {
-    readonly topology?: readonly TopologyPreset[];
-    readonly overrides?: Record<string, PresetOverride>;
-}
 /**
  * Declared width of every layer of the preset a live run is executing.
  *
@@ -48,19 +44,20 @@ interface TopologySettings {
  * instances that have already started, and the artifact's `layers` (which
  * carries the real width) lands only when the run settles. The one live source
  * is the `council` settings section — the deployment's read-only `topology`
- * mirror plus the saved `overrides` overlay, which is exactly the pair the tool
- * itself resolves on every call — joined to the run through the preset id in
- * `RunData.name`.
+ * mirror composed with THIS session's designer setup, which is exactly the
+ * pair the tool itself resolves on every call — joined to the run through the
+ * preset id in `RunData.name`.
  *
- * It is a live READ, not a record of what launched: an overlay edited while a
+ * It is a live READ, not a record of what launched: a setup edited while a
  * run is in flight would make this disagree with the run's real width. That is
  * why it is rendered as "of N declared" beside the observed counts rather than
  * as a denominator like `2/3`.
- * @param settings - the council settings section, as the card mirrors it.
+ * @param settings - the council settings section, as the designer mirrors it.
+ * @param sessionId - the session whose designer setup applies to the run.
  * @param runName - the workflow run's name (`council:<presetId>`).
  * @returns layer id -> declared width; empty when the preset cannot be identified.
  */
-export declare function declaredWidths(settings: TopologySettings | undefined, runName: string): ReadonlyMap<string, number>;
+export declare function declaredWidths(settings: CouncilSettings | undefined, sessionId: string, runName: string): ReadonlyMap<string, number>;
 /** How many members of one layer are in each lifecycle state right now. */
 export interface LiveCounts {
     readonly running: number;
@@ -173,10 +170,11 @@ export interface CouncilViewInjected {
     /** The viewer's own blended rate, $ per 1M tokens; 0 means show no money. */
     useCostRate: () => number;
     /**
-     * The deployment's mirrored topology and the saved overlay, for the declared
-     * width of a layer whose run has not settled yet.
+     * The whole `council` settings section — mirrored topology, the session's
+     * designer setup and the published preset id — for the declared width of a
+     * layer whose run has not settled yet.
      */
-    useCouncilTopology: () => TopologySettings | undefined;
+    useCouncilTopology: () => CouncilSettings | undefined;
     /**
      * Open one finding's file with the Host operating system's default
      * application, through `ctx.workspaces.openPath`.

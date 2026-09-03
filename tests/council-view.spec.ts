@@ -167,25 +167,47 @@ const LIVE_TOPOLOGY: TopologyPreset[] = [{
 
 describe('declaredWidths', () => {
   it('resolves the layer widths of the preset named by the run', () => {
-    const widths = declaredWidths({ topology: LIVE_TOPOLOGY }, 'council:bug-hunt')
+    const widths = declaredWidths({ topology: LIVE_TOPOLOGY }, 's-1', 'council:bug-hunt')
     expect(widths.get('map')).toBe(3)
     expect(widths.get('reduce')).toBe(1)
   })
 
-  it('counts the saved overlay, which is what the tool would run', () => {
-    const widths = declaredWidths(
-      { topology: LIVE_TOPOLOGY, overrides: { 'bug-hunt': { roles: { 'map.tests': { count: 4 } } } } },
-      'council:bug-hunt',
-    )
+  it("composes THIS session's designer setup, never another session's", () => {
+    const widths = declaredWidths({
+      topology: LIVE_TOPOLOGY,
+      sessionCouncil: {
+        's-1': { presetId: 'bug-hunt', roles: { 'map.tests': { count: 4 } } },
+        's-2': { presetId: 'bug-hunt', roles: { 'map.tests': { count: 9 } } },
+      },
+    }, 's-1', 'council:bug-hunt')
     expect(widths.get('map')).toBe(6)
+  })
+
+  it('drops the verify layer of the run when the session disabled it', () => {
+    const withVerify: TopologyPreset = {
+      id: 'feature-design',
+      label: 'Feature design',
+      description: 'design',
+      layers: [
+        ...LIVE_TOPOLOGY[0]?.layers ?? [],
+        { id: 'verify', kind: 'verify', roles: [{ id: 'V1', label: 'V', count: 2, model: '', provider: '' }] },
+      ],
+    }
+    const widths = declaredWidths(
+      { topology: [withVerify], sessionCouncil: { 's-1': { presetId: 'feature-design', verifyEnabled: false } } },
+      's-1',
+      'council:feature-design',
+    )
+    expect(widths.has('verify')).toBe(false)
+    expect(widths.get('map')).toBe(3)
   })
 
   it('reports nothing rather than guessing when the preset cannot be identified', () => {
     // Each of these is a real case: no settings section, a run started from a
     // preset this deployment no longer mirrors, and a run that is not a council.
-    expect(declaredWidths(undefined, 'council:bug-hunt').size).toBe(0)
-    expect(declaredWidths({ topology: LIVE_TOPOLOGY }, 'council:gone').size).toBe(0)
-    expect(declaredWidths({ topology: LIVE_TOPOLOGY }, 'some-other-workflow').size).toBe(0)
+    expect(declaredWidths(undefined, 's-1', 'council:bug-hunt').size).toBe(0)
+    expect(declaredWidths({ topology: LIVE_TOPOLOGY }, 's-1', 'council:gone').size).toBe(0)
+    expect(declaredWidths({ topology: LIVE_TOPOLOGY }, 's-1', 'some-other-workflow').size).toBe(0)
   })
 })
 

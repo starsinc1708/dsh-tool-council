@@ -1,0 +1,371 @@
+/* Per-session council designer above the composer card.
+   Theme-safe by construction: the palette is built from `currentColor` /
+   `Canvas`/`CanvasText` (which follow the host's light or dark scheme) and the
+   harness's own --dsh-* tokens when they exist — never hard-coded white or
+   black, so the popovers and layer outlines stay visible in both themes. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color-scheme: inherit;
+}
+.panel, .panel *, .panel *::before, .panel *::after { box-sizing: border-box; }
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  width: 100%;
+}
+.title { font-weight: 600; opacity: 0.92; }
+.subtitle { display: inline-flex; align-items: center; gap: 6px; opacity: 0.65; min-width: 0; flex: 1 1 auto; }
+.dirtyChip {
+  font-size: 10px; font-style: normal; padding: 0 6px; border-radius: 999px;
+  color: var(--dsh-warning, currentColor);
+  background: color-mix(in srgb, var(--dsh-warning, currentColor) 16%, transparent);
+  flex: none;
+}
+.chevron { font-size: 10px; opacity: 0.55; flex: none; }
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  background: color-mix(in srgb, currentColor 3%, transparent);
+}
+
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rowLabel { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; }
+
+.flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.nodeWrap { display: flex; flex-direction: column; }
+.arrow { text-align: center; font-size: 11px; opacity: 0.45; line-height: 1.2; }
+
+.node {
+  margin: 0;
+  padding: 6px 10px 8px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 34%, transparent);
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.node[data-kind='map'] { border-color: color-mix(in srgb, var(--dsh-info, currentColor) 42%, transparent); }
+.node[data-kind='verify'] { border-color: color-mix(in srgb, var(--dsh-warning, currentColor) 46%, transparent); }
+.node[data-kind='reduce'] { border-color: color-mix(in srgb, currentColor 30%, transparent); }
+
+.nodeHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+}
+.nodeWidth { margin-left: auto; font-size: 11px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+
+.verifyToggle {
+  font-size: 10px;
+  padding: 0 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 34%, transparent);
+  text-transform: none;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.verifyToggle:hover:not(:disabled) { background: color-mix(in srgb, currentColor 8%, transparent); }
+.verifyToggle[aria-checked='false'] { opacity: 0.6; }
+
+.roles { display: flex; flex-direction: column; gap: 7px; padding-top: 2px; }
+
+.roleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.roleLabel {
+  font-size: 12px; font-weight: 500;
+  min-width: 70px; max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fixedOne { font-size: 11px; opacity: 0.6; font-variant-numeric: tabular-nums; }
+
+.stepper { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.count { min-width: 20px; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+.step {
+  width: 18px; height: 18px; padding: 0; border-radius: 5px;
+  font-size: 13px; line-height: 1; cursor: pointer;
+  color: inherit; background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.step:hover:not(:disabled) { background: color-mix(in srgb, currentColor 10%, transparent); }
+.step:disabled { opacity: 0.4; cursor: default; }
+
+/* Model/preset/menu chrome. Menus sit on Canvas (theme-aware) so white text
+   never lands on a hard-coded light panel in a dark session. */
+.pickerWrap { position: relative; display: inline-flex; }
+.pickerTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 2px 8px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pickerTrigger:hover:not(:disabled) { background: color-mix(in srgb, currentColor 8%, transparent); }
+.pickerTrigger:disabled { opacity: 0.5; cursor: default; }
+.pickerLabel {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.chevronIcon { flex: none; opacity: 0.6; color: currentColor; }
+
+.pickerMenu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  left: 0;
+  min-width: max(240px, 100%);
+  width: max-content;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 8px 24px color-mix(in srgb, CanvasText 22%, transparent);
+}
+.pickerMenu .search,
+.pickerMenu .thresholdInput,
+.pickerMenu .textInput,
+.pickerMenu .promptInput {
+  color: inherit;
+}
+
+.search {
+  width: 100%;
+  flex: none;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  color: inherit;
+  font-size: 12px;
+  caret-color: currentColor;
+}
+.search::placeholder { opacity: 0.55; }
+.menuList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.menuItem:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.menuItem[aria-selected='true'] { background: color-mix(in srgb, currentColor 15%, transparent); font-weight: 600; }
+.menuEmpty { padding: 8px 9px; font-size: 12px; opacity: 0.6; }
+
+.providerGroup { display: flex; flex-direction: column; margin-top: 3px; }
+.providerTitle {
+  padding: 2px 9px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+}
+.modelName { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modelId { margin-left: auto; flex: none; font-size: 11px; opacity: 0.55; font-variant-numeric: tabular-nums; }
+
+.iconButton {
+  width: 20px; height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.65;
+  flex: none;
+}
+.iconButton:hover { background: color-mix(in srgb, currentColor 10%, transparent); opacity: 1; }
+
+.addRoleButton, .addButton {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--dsh-info, currentColor);
+  background: color-mix(in srgb, var(--dsh-info, currentColor) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsh-info, currentColor) 40%, transparent);
+}
+.addRoleButton:hover:not(:disabled), .addButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsh-info, currentColor) 18%, transparent);
+}
+.addRoleButton:disabled, .addButton:disabled { opacity: 0.45; cursor: default; }
+
+.authForm { display: flex; flex-direction: column; gap: 5px; flex-basis: 100%; padding: 6px 2px 2px 6px; }
+.textInput, .promptInput, .thresholdInput {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  color: inherit;
+  font-size: 12px;
+  font-family: inherit;
+  caret-color: currentColor;
+}
+.textInput {
+  /* Compact single-line name field — the row's width, never the column's
+     height: in the column flex this must be height-agnostic, so width is
+     explicit and flex shrinks nothing vertical. */
+  flex: 0 0 auto;
+  width: min(260px, 100%);
+  height: auto;
+}
+.promptInput {
+  resize: vertical;
+  width: 100%;
+  min-height: 140px;
+  max-height: 320px;
+  line-height: 1.5;
+}
+.thresholdInput { width: 64px; }
+
+.hint { margin: 0; font-size: 11px; opacity: 0.6; }
+.warn { margin: 0; font-size: 12px; color: var(--dsh-danger, #e05353); }
+
+.footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.spacer { flex: 1 1 auto; }
+.summary { font-size: 11px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+
+.primary, .ghost {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.primary {
+  color: #fff;
+  background: var(--dsh-accent, #4a7dff);
+  border: 1px solid transparent;
+  font-weight: 600;
+}
+.primary:disabled { opacity: 0.5; cursor: default; }
+.ghost {
+  color: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+}
+.ghost:hover:not(:disabled) { background: color-mix(in srgb, currentColor 8%, transparent); }
+.ghost:disabled { opacity: 0.45; cursor: default; }
+
+/* Custom name field and the library sections. */
+.nameInput {
+  flex: 1 1 220px;
+  min-width: 160px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  color: inherit;
+  font-size: 12px;
+  font-family: inherit;
+  caret-color: currentColor;
+}
+.nameInput::placeholder { opacity: 0.55; }
+
+.library { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent); padding-top: 6px; }
+.libraryHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+  text-align: left;
+}
+.libraryBody { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 0 4px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  font-size: 11px;
+}
+.chipLabel { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Role rows align into even columns — name | members | model | actions — and
+   the same column widths repeat in every layer node, so the numbers and the
+   model triggers line up down the whole DAG. */
+.roleRow {
+  display: grid;
+  grid-template-columns: minmax(84px, 1fr) 80px minmax(150px, 208px) auto;
+  column-gap: 12px;
+  align-items: center;
+  row-gap: 4px;
+}
+.roleRow .roleLabel { grid-column: 1; min-width: 0; max-width: none; }
+.roleRow .fixedOne { grid-column: 2; text-align: center; }
+.roleRow .stepper { grid-column: 2; justify-self: center; }
+.roleRow .pickerWrap { grid-column: 3; width: 100%; max-width: none; }
+.roleRow .pickerTrigger { width: 100%; max-width: 100%; }
+.roleRow .roleActions { grid-column: 4; display: inline-flex; align-items: center; gap: 2px; justify-self: end; }
+.roleRow .authForm { grid-column: 1 / -1; }

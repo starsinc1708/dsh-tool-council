@@ -25,8 +25,8 @@ import { HARD_STOP_GRACE_MS, expandLayers, resolveConfig, totalAgentBudget } fro
 import type { Config, ResolvedConfig } from './policy.ts'
 import { createCouncilRecorder, taskSnippet } from './recorder.ts'
 import type { CouncilRunNarration } from './recorder.ts'
-import { COUNCIL_NAMESPACE, applyOverrides } from './settings.ts'
-import type { CouncilSettings } from './settings.ts'
+import { COUNCIL_NAMESPACE, applyCustomSetup, applySessionSetup, sessionSetupOf } from './settings.ts'
+import type { CouncilSettings, SessionCouncilSetup } from './settings.ts'
 import { COUNCIL_SCRIPT } from './script.ts'
 import type { ScriptArgs, ScriptStopReason } from './script.ts'
 import { TABLE_LEGEND, assertClustersWellFormed, assertTallyAgrees, renderTable, tally } from './tally.ts'
@@ -43,7 +43,7 @@ export { TASK_SNIPPET_CHARS, taskSnippet } from './recorder.ts'
 export { BUILTIN_PRESETS } from './presets.ts'
 export { Config, HARD_STOP_GRACE_MS, expandLayers, resolveConfig, totalAgentBudget } from './policy.ts'
 export type { ResolvedConfig } from './policy.ts'
-export { COUNCIL_NAMESPACE, applyOverrides } from './settings.ts'
+export { COUNCIL_NAMESPACE, applySessionSetup, sessionSetupOf } from './settings.ts'
 export {
   TABLE_LEGEND, applyQuorum, assertClustersWellFormed, capPerMember, dedupeFindings, fingerprint,
   mergeClusters, normalizeLocation, renderTable, tally,
@@ -464,21 +464,17 @@ export function apply(ctx: Context, config: Config): void {
   const recorder = createCouncilRecorder(ctx)
 
   // The deployment policy (`config`) fixes the topology and the tool's surface
-  // at registration. The user plane — default preset, per-role widths and
-  // models, quorums — lives in the `council` settings namespace, which the
-  // always-composed host row owns and this tool row only reads. Reading it
-  // fresh on every call lets an edit land on the next run without a
-  // recomposition; a deployment with no settings service (or no host row) runs
-  // the composed policy unchanged.
-  const effective = (): ResolvedConfig => {
+  // at registration. There is no global user overlay anymore — a council is
+  // configured where it runs, in the composer-dock designer at the start of a
+  // Map-Reduce session — so the only thing this tool row reads from the
+  // `council` settings namespace at call time is the calling session's own
+  // setup. Reading it fresh on every call lets an edit land on the next run
+  // without a recomposition; a deployment with no settings service (or no host
+  // row) runs the composed policy unchanged, and a session that never
+  // configured a council lets the model pick a preset per request as before.
+  const readSettings = (): CouncilSettings | undefined => {
     const settings = ctx.get('settings') as { get(name: string): unknown } | undefined
-    const section = settings?.get(COUNCIL_NAMESPACE) as CouncilSettings | undefined
-    if (section === undefined) return composed
-    return resolveConfig({
-      ...config,
-      presets: applyOverrides(composed.presets, section.overrides),
-      defaultPreset: section.defaultPreset ?? composed.defaultPreset.id,
-    })
+    return settings?.get(COUNCIL_NAMESPACE) as CouncilSettings | undefined
   }
 
   const presetList = composed.presets
@@ -523,7 +519,9 @@ export function apply(ctx: Context, config: Config): void {
         enum: composed.presets.map(preset => preset.id),
         description: `Topology to run. Choose by the task: bug-hunt for finding defects/auditing code, `
           + `research for investigating a question, feature-design for designing a feature, refactor for `
-          + `planning a refactor. Defaults to ${composed.defaultPreset.id}.`,
+          + `planning a refactor. Defaults to ${composed.defaultPreset.id}. `
+          + 'Ignored when this session has a council configured in the composer designer — that topology '
+          + 'is fixed for the session and runs for every request in it.',
       },
     },
     output: {
@@ -543,18 +541,61 @@ export function apply(ctx: Context, config: Config): void {
       if (parent === undefined) throw new Error('council requires a calling agent (exec.agent was undefined)')
       const task = args.task.trim()
       if (task.length === 0) throw new Error('council task must be a non-empty string')
-      const resolved = effective()
-      const preset = args.preset === undefined
-        ? resolved.defaultPreset
-        : resolved.presets.find(candidate => candidate.id === args.preset)
-      if (preset === undefined) throw new Error(`council: unknown preset "${String(args.preset)}"`)
+      const section = readSettings()
+      const resolved = composed
+      // A session that configured its council in the designer runs THAT
+      // topology for every request: the model's per-request preset choice is a
+      // fallback for sessions (and deployments) without one, never an override
+      // of what the user fixed. `applySessionSetup` composes the tuning onto
+      // the real preset and refuses an over-wide layer or unreachable quorum
+      // before a single child is paid for.
+      const setup: SessionCouncilSetup | undefined = sessionSetupOf(section, parent.session.id)
+      let runPreset: PresetConfig
+      // A custom (from-scratch) council carries its whole topology in the
+      // setup; it is never anchored to a mirrored preset.
+      const customLayers = (setup?.topology ?? []).length > 0 && (setup?.presetId ?? '') === ''
+      if (customLayers) {
+        runPreset = applyCustomSetup(setup!.topology ?? [], resolved.maxAgentsPerLayer, setup?.name ?? '')
+        const validated = resolveConfig({
+          presets: [runPreset],
+          defaultPreset: runPreset.id,
+          maxAgentsPerLayer: resolved.maxAgentsPerLayer,
+          maxLayers: resolved.maxLayers,
+        })
+        runPreset = validated.presets[0] ?? runPreset
+      } else if (setup?.presetId !== undefined && setup.presetId !== '') {
+        const fixed = resolved.presets.find(candidate => candidate.id === setup.presetId)
+        if (fixed === undefined) {
+          throw new Error(
+            `council: this session's preset "${setup.presetId}" is not offered by the deployment`,
+          )
+        }
+        runPreset = applySessionSetup(fixed, setup, resolved.maxAgentsPerLayer)
+        // A session may author roles and layers, and authored structure is
+        // user-plane JSON: run the FULL deployment validation over the result
+        // (unique ids, non-empty prompts, one trailing reduce, the layer cap,
+        // widths, the quorum) before a single child is paid for.
+        const validated = resolveConfig({
+          presets: [runPreset],
+          defaultPreset: runPreset.id,
+          maxAgentsPerLayer: resolved.maxAgentsPerLayer,
+          maxLayers: resolved.maxLayers,
+        })
+        runPreset = validated.presets[0] ?? runPreset
+      } else {
+        const picked = args.preset === undefined
+          ? resolved.defaultPreset
+          : resolved.presets.find(candidate => candidate.id === args.preset)
+        if (picked === undefined) throw new Error(`council: unknown preset "${String(args.preset)}"`)
+        runPreset = picked
+      }
       void requireFreshProvider(ctx, resolved.subagentProvider)
 
-      const layers = expandLayers(preset)
+      const layers = expandLayers(runPreset)
       const scriptArgs: ScriptArgs = {
-        framing: preset.framing ?? '',
+        framing: runPreset.framing ?? '',
         task,
-        reduceMode: preset.reduceMode ?? 'vote',
+        reduceMode: runPreset.reduceMode ?? 'vote',
         maxFindings: resolved.maxFindings,
         maxFindingChars: resolved.maxFindingChars,
         maxFindingsPerMember: resolved.maxFindingsPerMember,
@@ -569,8 +610,8 @@ export function apply(ctx: Context, config: Config): void {
       const run: WorkflowRun = ctx.workflowEngine.start({
         script: COUNCIL_SCRIPT,
         meta: {
-          name: `council:${preset.id}`,
-          description: preset.description,
+          name: `council:${runPreset.id}`,
+          description: runPreset.description,
           // The title must stay the layer id: `phase(title)` matches it by exact
           // string, and the script phases by layer id. The KIND travels in the
           // durable `tool-council/run-start` record instead, which is what the
@@ -615,15 +656,15 @@ export function apply(ctx: Context, config: Config): void {
         // acts on.
         assertClustersWellFormed(outcome.findings)
         if (outcome.tally !== null) {
-          const verifyLayer = preset.layers.find(layer => layer.kind === 'verify')
+          const verifyLayer = runPreset.layers.find(layer => layer.kind === 'verify')
           const quorum = verifyLayer?.quorum ?? { rule: 'majority' as const }
           assertTallyAgrees(tally(outcome.findings, outcome.ballots, quorum), outcome.tally)
         }
         record = buildResultRecord(outcome, {
           runId: run.id,
-          preset: preset.id,
+          preset: runPreset.id,
           task,
-          layers: layerRecords(preset),
+          layers: layerRecords(runPreset),
           narration: recorder.narration(run.id),
           stopReason: settled.stopReason,
           agentsStarted: settled.agentsStarted,
@@ -632,7 +673,7 @@ export function apply(ctx: Context, config: Config): void {
         })
         return {
           runId: run.id,
-          preset: preset.id,
+          preset: runPreset.id,
           agentsStarted: settled.agentsStarted,
           stopReason: record.stopReason,
           durationMs: record.durationMs,
@@ -645,9 +686,9 @@ export function apply(ctx: Context, config: Config): void {
         // the log line below something honest to say.
         record = failureRecord({
           runId: run.id,
-          preset: preset.id,
+          preset: runPreset.id,
           task,
-          layers: layerRecords(preset),
+          layers: layerRecords(runPreset),
           narration: recorder.narration(run.id),
           stopReason: settled?.stopReason ?? 'error',
           error: error instanceof Error ? error.message : String(error),

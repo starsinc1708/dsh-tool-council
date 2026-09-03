@@ -1,72 +1,60 @@
 /**
- * Council settings card, browser half.
+ * Council surfaces, browser half.
  *
- * The card joins the "Plugin configuration" tab through the keyed
- * `settings.plugin.item` slot: that tab dispatches one slot key per settings
- * namespace the Host serves, so a deployment that does not mount
- * `@starsinc1708/dsh-tool-council` renders nothing here and no repository file
- * needs editing to add the card.
+ * Two seats, both keyed to the `council` settings namespace the always-
+ * composed host row serves:
+ *
+ *  - the composer-dock **designer** (per-session council setup) — the only
+ *    configuration surface left by design, because a council is configured
+ *    where it runs, at the start of a Map-Reduce session, not in Settings;
+ *  - the **Council conversation view** that renders each finished run as a
+ *    graph, verdict table and report.
+ *
+ * There is deliberately NO Settings → Plugins card anymore: the deployment's
+ * topologies are the designer's palette, and the old global overlay was the
+ * one thing this plugin let you set that no session could undo.
  *
  * @module @deepseek-ai/dsh-client-ui-council
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { CouncilSettings } from '@starsinc1708/dsh-tool-council/types'
-// Type-only: the keyed slot's declaration and the `locale` service's Context
-// augmentation. A value import across client plugins fails the purity gate.
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+// Type-only: brings the `locale` service's Context augmentation and the
+// `settingsScope` service declaration (the settings domain base provides the
+// scope binder).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 
-import { CouncilCard } from './CouncilCard.tsx'
-import type { CouncilCardFace } from './CouncilCard.tsx'
-import { CouncilCardController } from './controller.ts'
 import { registerCouncilView } from './council-view.tsx'
+import { registerCouncilDesigner } from './session-council.tsx'
 import { NS, en, zh } from './locales.ts'
 import type { CouncilKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** Council settings-card and graph-view copy. */
+    /** Council designer and graph-view copy. */
     council: CouncilKey
   }
 }
 
 /**
- * Required services: card slot, graph view slot, session token reads, locale,
- * and `workspaces` for opening a finding's file from the verdict table.
+ * Required services: slot registry, locale, the settings-scope binder, session
+ * token reads for the graph tab, and `workspaces` for opening a finding's file.
  */
 export const inject = ['slots', 'locale', 'connection', 'settingsScope', 'sessions', 'workspaces']
 
 /**
- * Contribute the council settings card and the council graph conversation view.
+ * Contribute the composer-dock council designer and the council graph view.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-council: dictionaries')
 
-  // One binding, two consumers: the card writes through it and the graph tab
-  // reads the deployment's published preset id off the same section, so the tab
-  // is not hard-wired to the shipped `map-reduce` id.
+  // One binding, two consumers: the designer writes through it and the graph
+  // tab reads the deployment's mirrored topology and preset id off the same
+  // section.
   const scope = ctx.settingsScope.bind<CouncilSettings>({ namespace: 'council' })
-  const t = ctx.locale.bind(NS)
-  const controller = new CouncilCardController(
-    scope,
-    error => t('partialSave', { error }),
-  )
-  // The controller holds a `beforeunload` guard while edits are staged; the
-  // effect is what releases it when the plugin is disposed or hot-reloaded.
-  ctx.effect(() => () => { controller.dispose() }, 'ui-council: settings card lifetime')
-  const face = (): CouncilCardFace => ({
-    hooks: { councilCard: controller.store() },
-    ...controller.actions(),
-  })
 
-  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
-    name: 'settings.plugin.item',
-    key: 'council',
-    locale: NS,
-    inject: face,
-  }, CouncilCard))
-
+  registerCouncilDesigner(ctx, scope)
   registerCouncilView(ctx, scope)
 }

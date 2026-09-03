@@ -61,14 +61,18 @@ function stubContext(overrides: Record<string, unknown> = {}) {
 }
 
 describe('client apply', () => {
-  it('registers the settings card and the Council view without throwing', () => {
+  it('registers the composer-dock designer and the Council view without throwing', () => {
     const { ctx, recorded } = stubContext()
     expect(() => { apply(ctx as never) }).not.toThrow()
 
-    // The card is dispatched by settings namespace: a missing `council` key is
-    // exactly how the card disappears from Settings -> Plugins.
-    expect(recorded.slots).toContain('settings.plugin.item')
-    expect(recorded.slotKeys).toContain('council')
+    // The council is configured in the composer dock (per Map-Reduce session),
+    // NOT in Settings -> Plugins — a Settings card would be a regression here.
+    expect(recorded.slots).not.toContain('settings.plugin.item')
+    // The designer and the results tab both ride conversation seats; a
+    // registration throw removes them from every Map-Reduce session with no
+    // other signal.
+    expect(recorded.slots).toContain('conversation.input.dock')
+    expect(recorded.slotKeys).toContain('council-design')
     expect(recorded.slots).toContain('conversation.view')
     expect(recorded.locales).toContain('council')
     expect(recorded.bound).toContain('council')
@@ -77,11 +81,13 @@ describe('client apply', () => {
   it('declares every service it actually uses', () => {
     // A service used but not injected is undefined at apply time; a service
     // injected but unused keeps a dependency the deployment must satisfy.
+    // `get` is the cordis Context API for OPTIONAL service lookups (the model
+    // directory seam), not an injectable service — same exemption as `then`.
     const used = new Set<string>()
     const { ctx } = stubContext()
     const probe = new Proxy(ctx as Record<string, unknown>, {
       get(target, key: string) {
-        if (typeof key === 'string' && key !== 'effect') used.add(key)
+        if (typeof key === 'string' && key !== 'effect' && key !== 'get') used.add(key)
         return target[key]
       },
     })

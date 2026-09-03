@@ -1,21 +1,18 @@
 /**
- * The user-plane settings section and the overlay it applies to the
- * composition's presets.
+ * The `council` settings section: the deployment's read-only mirrors plus the
+ * per-session council setups the Map-Reduce designer writes.
  *
- * The section carries a read-only `topology` mirror alongside the writable
- * fields. That mirror is what lets the browser card render the deployment's
- * actual layers and roles without a `@Remote` namespace — a Remote would mean
- * editing `packages/api/remotes` on both faces, which is an explicit choice by
- * the Client composition owner and not worth a form that changes two numbers.
- *
- * Browser-safe: no cordis Context, no Agent, no host-only import.
+ * Browser-safe: no cordis Context, no Agent, no host-only import. Everything
+ * here is shared by the host (which composes a session's setup onto a real
+ * preset) and the browser (which validates the same setup against the mirrors
+ * before offering Save).
  *
  * @module @starsinc1708/dsh-tool-council/types
  */
 import type { LayerKind, PresetConfig, QuorumRule } from './types.ts';
-/** The settings namespace this package serves. Also the settings-card slot key. */
+/** The settings namespace this package serves. */
 export declare const COUNCIL_NAMESPACE = "council";
-/** One role, as the card needs to draw it — prompts deliberately excluded. */
+/** One role, as the designer needs to draw it — prompts deliberately excluded. */
 export interface TopologyRole {
     readonly id: string;
     readonly label: string;
@@ -23,7 +20,7 @@ export interface TopologyRole {
     readonly model: string;
     readonly provider: string;
 }
-/** One layer, as the card needs to draw it. */
+/** One layer, as the designer needs to draw it. */
 export interface TopologyLayer {
     readonly id: string;
     readonly kind: LayerKind;
@@ -31,41 +28,132 @@ export interface TopologyLayer {
     readonly quorumRule?: QuorumRule;
     readonly quorumThreshold?: number;
 }
-/** One preset, as the card needs to draw it. */
+/** One preset, as the designer needs to draw it. */
 export interface TopologyPreset {
     readonly id: string;
     readonly label: string;
     readonly description: string;
     readonly layers: readonly TopologyLayer[];
 }
-/** A user override of one role's width, model, or provider. */
-export interface RoleOverride {
+/**
+ * One role's per-session tuning, keyed `${layerId}.${roleId}` in the setup.
+ * An absent field inherits the composed preset; an empty model/provider route
+ * also means inherit (the composed route survives); `count` is the ABSOLUTE
+ * width of the role — the number of concurrent instances this session starts.
+ */
+export interface SessionRoleTune {
     count?: number;
     model?: string;
     provider?: string;
 }
-/** A user override of one verify layer's quorum. */
-export interface QuorumOverride {
+/** A per-session quorum override for the verify layer. */
+export interface SessionQuorumTune {
     rule?: QuorumRule;
     threshold?: number;
 }
-/** Every override for one preset, keyed `layerId.roleId` and `layerId`. */
-export interface PresetOverride {
-    roles?: Record<string, RoleOverride>;
-    quorums?: Record<string, QuorumOverride>;
+/**
+ * One role a session authors in the designer. Unlike a tuning (which edits an
+ * existing role) an authored role carries its own prompt — the whole lens —
+ * because nothing in the preset knows it.
+ */
+export interface SessionRoleAuthor {
+    /** Unique within the whole preset; the designer generates it from the label. */
+    id: string;
+    /** Display label; defaults to the id when absent. */
+    label?: string;
+    /** The role's instruction, appended to the framing exactly like a preset role's. */
+    prompt: string;
+    /** Independent instances of this role; defaults to 1. */
+    count?: number;
+    /** Route the members run on, when the designer picked one. */
+    model?: string;
+    provider?: string;
+}
+/**
+ * One layer of a session's authored topology — a map layer added below a
+ * preset's own map layers, or a node of a fully custom (from-scratch) preset.
+ * Each carries its own roles; a whole added layer runs as another examining
+ * pass before the verify layer.
+ */
+export interface SessionLayerAuthor {
+    /** Unique within the preset; the designer generates it from the label. */
+    id: string;
+    /** Display label; defaults to the id when absent. */
+    label?: string;
+    /** Layer kind. Omitted = `map` (authored layers added under a preset). */
+    kind?: LayerKind;
+    /** Roles on this layer. */
+    roles: SessionRoleAuthor[];
+    /** Verify-layer quorum; only meaningful when `kind` is `verify`. */
+    quorum?: SessionQuorumTune;
+}
+/** A reusable, user-authored role kept in the role library. */
+export interface RoleTemplate extends SessionRoleAuthor {
+    id: string;
+}
+/** A reusable, user-authored topology kept in the preset library. */
+export interface PresetTemplate {
+    /** Unique library key. */
+    id: string;
+    /** Display label, shown in the preset menu. */
+    label: string;
+    layers: SessionLayerAuthor[];
+}
+/**
+ * Everything the composer-dock designer lets one session say about its
+ * council, keyed by the session's id in `CouncilSettings.sessionCouncil`.
+ *
+ * A setup FIXES the session's council: every run in the session executes the
+ * named preset composed with these edits, and the model's per-request preset
+ * choice is ignored while a setup exists. Absent setup = the model picks a
+ * preset per request, exactly as before.
+ */
+export interface SessionCouncilSetup {
+    /**
+     * Preset id from the deployment's mirrored topology that this session runs.
+     * ABSENT (or empty) with a `topology` body means a fully custom, built-from-
+     * scratch council. A preset id and a custom body never mix: the custom body
+     * wins.
+     */
+    presetId?: string;
+    /** Display name for a custom council (mirrors a preset's label). */
+    name?: string;
+    /** `false` drops the verify layer (map → reduce only). Default true. */
+    verifyEnabled?: boolean;
+    /** Per-role tuning of EXISTING roles, keyed `${layerId}.${roleId}`. */
+    roles?: Record<string, SessionRoleTune>;
+    /** Verify-layer quorum override; ignored while `verifyEnabled` is false. */
+    quorum?: SessionQuorumTune;
+    /**
+     * Authored roles appended to existing layers, keyed by that layer's id
+     * (map and verify layers only). Each carries its own prompt.
+     */
+    addRoles?: Record<string, SessionRoleAuthor[]>;
+    /** Authored map layers appended after the preset's own map layers. */
+    addLayers?: SessionLayerAuthor[];
+    /**
+     * The WHOLE topology of a custom council built from scratch: every layer,
+     * kinds included, roles with their own prompts. Presence of this body (with
+     * no `presetId`) is what makes the session's council custom.
+     */
+    topology?: SessionLayerAuthor[];
 }
 /** The council settings document. */
 export interface CouncilSettings {
-    /** Preset used when the model names none. */
-    defaultPreset?: string;
-    /** Read-only composition mirror; the card renders it and never writes it. */
+    /** Read-only composition mirror; the designer renders it and never writes it. */
     topology?: TopologyPreset[];
     /**
-     * Read-only mirror of the deployment's `maxAgentsPerLayer`. The card needs it
-     * to bound the width input and warn BEFORE a save the host would refuse; it
-     * is written by the composition as part of the section's `base` layer.
+     * Read-only mirror of the deployment's `maxAgentsPerLayer`. The designer
+     * bounds every width input against it; it is written by the composition as
+     * part of the section's `base` layer.
      */
     maxAgentsPerLayer?: number;
+    /**
+     * Read-only mirror of the deployment's `maxLayers` — how many layers one
+     * preset may compose. The designer disables "add layer" once a session's
+     * authored preset would exceed it, matching the host's own refusal.
+     */
+    maxLayers?: number;
     /**
      * Read-only mirror of the agent-preset id this council was published under.
      * The Council conversation tab gates on it, so a deployment that renamed the
@@ -73,34 +161,186 @@ export interface CouncilSettings {
      */
     agentPresetId?: string;
     /**
+     * Read-only mirror of the deployment's default preset id — the preset a
+     * session runs when neither the model nor a session setup names one. The
+     * designer uses it to pre-select the preset a fresh session would otherwise
+     * get.
+     */
+    defaultPreset?: string;
+    /**
      * Blended $ per 1M tokens for the Council tab's optional cost estimate; `0`
-     * (the default) shows no money at all.
-     *
-     * Deliberately a user preference and deliberately one number. The token meter
-     * reports no price and the view cannot know which route each member actually
-     * ran on, so a per-route figure is impossible by construction. This is the
-     * viewer's own arithmetic on their own rate, labelled as an estimate — not a
-     * bill, and never a substitute for one.
+     * (the default) shows no money at all. No editor remains for this field —
+     * the Map-Reduce designer owns the council now — but the viewer arithmetic
+     * stays available to a deployment that writes it by hand.
      */
     costPerMillionTokens?: number;
-    /** User overlay, keyed by preset id. */
-    overrides?: Record<string, PresetOverride>;
+    /** Per-session council setups, keyed by the parent session's id. */
+    sessionCouncil?: Record<string, SessionCouncilSetup>;
+    /** The user's reusable role library, keyed by role id. */
+    roleLibrary?: Record<string, RoleTemplate>;
+    /** The user's reusable custom-preset library, keyed by preset id. */
+    presetLibrary?: Record<string, PresetTemplate>;
 }
+/** Ceiling on one role's width in a session setup (mirrors the schema). */
+export declare const MAX_ROLE_WIDTH = 64;
 /**
- * Project the composition's presets into the card-facing mirror.
+ * Project the composition's presets into the browser-facing mirror.
  * @param presets - the deployment's resolved presets.
  * @returns the same topology with prompts and framing dropped.
  */
 export declare function toTopology(presets: readonly PresetConfig[]): TopologyPreset[];
 /**
- * Apply the user overlay to the composition's presets.
- *
- * Unknown preset, layer, or role keys are ignored rather than refused: a user
- * document survives a composition change that removed a role, and the next
- * write simply drops the stale key. Structural rules stay with the
- * composition — an overlay may change a width or a model, never a topology.
- * @param presets - the composition's presets.
- * @param overrides - the user overlay, keyed by preset id.
- * @returns presets with widths, models, and quorums overlaid.
+ * The stored setup of one session, or undefined when it chose none.
+ * @param section - the resolved council settings section, or undefined.
+ * @param sessionId - the parent session the run belongs to.
+ * @returns the setup, or undefined.
  */
-export declare function applyOverrides(presets: readonly PresetConfig[], overrides: Record<string, PresetOverride> | undefined): PresetConfig[];
+export declare function sessionSetupOf(section: CouncilSettings | undefined, sessionId: string): SessionCouncilSetup | undefined;
+/**
+ * One role's tuned count under a setup.
+ *
+ * The count is ABSOLUTE — the role's width for the session. A value outside
+ * `1..MAX_ROLE_WIDTH` is treated as absent (the composed width stands) because
+ * the document is user-plane JSON that survived arbitrary edits; anything else
+ * would start a layer with a nonsense number of members.
+ * @param composed - the role's composed width, or undefined for the default 1.
+ * @param tune - the session's tuning of this role, or undefined.
+ * @returns the count to run.
+ */
+export declare function tunedCount(composed: number | undefined, tune: SessionRoleTune | undefined): number;
+/**
+ * Whether a session setup drops a layer (only the verify layer can be dropped).
+ * @param kind - the layer kind.
+ * @param setup - the session setup, or undefined.
+ * @returns true when the layer should not run.
+ */
+export declare function layerDropped(kind: LayerKind, setup: SessionCouncilSetup | undefined): boolean;
+/**
+ * Compose a session setup onto a real preset.
+ *
+ * A setup may tune existing roles (widths, routes), append AUTHORED roles to
+ * map and verify layers (each carrying its own prompt), insert AUTHORED map
+ * layers after the preset's own map layers, drop the verify layer, and restate
+ * its quorum. It may not touch the reduce layer or reorder anything the
+ * preset composed. Unknown role keys are ignored (a stored setup survives a
+ * composition that removed a role). Over-wide layers and unreachable
+ * thresholds are refused HERE, before a single child is paid for; the full
+ * structural rules (unique ids, non-empty prompts, layer ordering) are
+ * re-verified by the caller through `resolveConfig` on the host.
+ * @param preset - the composed preset, with its prompts intact.
+ * @param setup - the session's setup, or undefined (returns the preset).
+ * @param maxAgentsPerLayer - the deployment's per-layer width ceiling.
+ * @returns the preset to run.
+ * @throws RangeError naming the offending layer on an over-wide layer or an
+ * unreachable threshold.
+ */
+export declare function applySessionSetup(preset: PresetConfig, setup: SessionCouncilSetup | undefined, maxAgentsPerLayer: number): PresetConfig;
+/**
+ * Compose a fully custom (from-scratch) topology into a runnable preset.
+ *
+ * The session authored every layer itself — kinds, roles and prompts included
+ * — so there is no mirrored preset to compose onto. Structural rules (a single
+ * trailing reduce, at most one verify, unique ids, non-empty prompts) are
+ * enforced by the caller through `resolveConfig`; over-wide layers and
+ * unreachable thresholds are refused here, before a single child is paid for.
+ * @param layers - the authored topology, in composition order.
+ * @param maxAgentsPerLayer - the deployment's per-layer width ceiling.
+ * @param name - display label for the run.
+ * @returns the preset to run.
+ * @throws RangeError naming the offending layer on an over-wide layer.
+ */
+export declare function applyCustomSetup(layers: readonly SessionLayerAuthor[], maxAgentsPerLayer: number, name: string): PresetConfig;
+/** One planned layer: id, kind, and the width a setup would give it. */
+interface WidthLayer {
+    readonly id: string;
+    readonly kind: LayerKind;
+    readonly width: number;
+}
+/**
+ * The widths of every layer one mirrored preset composes under a setup —
+ * tuned existing roles, authored roles, authored map layers, verification
+ * dropped when off, and the reduce layer at its single instance. Shared by the
+ * width/quorum validators and the Council tab's "of N declared" readout, so
+ * what the designer blocks, what the tool runs and what the tab says can
+ * never disagree.
+ * @param preset - the mirrored preset.
+ * @param setup - the session setup, or undefined for the composed widths.
+ * @returns layer id -> width, in composition order.
+ */
+export declare function sessionLayerWidthPlan(preset: TopologyPreset, setup: SessionCouncilSetup | undefined): readonly WidthLayer[];
+/**
+ * Every planned layer whose width a session setup would push past the ceiling
+ * — the designer-side twin of `applySessionSetup`'s refusal, computed over the
+ * mirrored topology so the panel can disable Save before the Host would refuse
+ * the run.
+ * @param preset - the mirrored preset.
+ * @param setup - the staged session setup, or undefined.
+ * @param maxAgentsPerLayer - the deployment's per-layer width ceiling.
+ * @returns one entry per offending layer, in composition order.
+ */
+export declare function sessionWidthViolations(preset: TopologyPreset, setup: SessionCouncilSetup | undefined, maxAgentsPerLayer: number): ReadonlyArray<{
+    readonly layerId: string;
+    readonly width: number;
+    readonly max: number;
+}>;
+/**
+ * The declared width of every layer one mirrored preset composes under a
+ * session setup — what the Council tab's "of N declared" readouts should show.
+ * @param preset - the mirrored preset.
+ * @param setup - the session setup, or undefined for the composed widths.
+ * @returns layer id -> declared width, in composition order.
+ */
+export declare function sessionLayerWidths(preset: TopologyPreset, setup: SessionCouncilSetup | undefined): ReadonlyMap<string, number>;
+/**
+ * Whether a session's staged quorum for a verify layer is unreachable by its
+ * own width — the designer-side twin of `applySessionSetup`'s threshold check.
+ * @param preset - the mirrored preset.
+ * @param setup - the staged session setup, or undefined.
+ * @returns the violation, or undefined when the quorum is fine or absent.
+ */
+export declare function sessionQuorumViolation(preset: TopologyPreset, setup: SessionCouncilSetup | undefined): {
+    readonly rule: QuorumRule;
+    readonly threshold: number;
+    readonly width: number;
+} | undefined;
+/**
+ * How many layers a setup's preset would compose — the designer's "add layer"
+ * gate against the mirrored `maxLayers`.
+ * @param preset - the mirrored preset.
+ * @param setup - the staged session setup, or undefined.
+ * @returns the composed layer count.
+ */
+export declare function sessionLayerCount(preset: TopologyPreset, setup: SessionCouncilSetup | undefined): number;
+/** One width violation of a custom topology. */
+export interface CustomWidthViolation {
+    readonly layerId: string;
+    readonly width: number;
+    readonly max: number;
+}
+/**
+ * Every layer of a custom topology whose width exceeds the ceiling — the
+ * designer-side twin of `applyCustomSetup`'s refusal.
+ * @param layers - the authored topology.
+ * @param maxAgentsPerLayer - the deployment's per-layer width ceiling.
+ * @returns one entry per offending layer, in composition order.
+ */
+export declare function customWidthViolations(layers: readonly SessionLayerAuthor[], maxAgentsPerLayer: number): readonly CustomWidthViolation[];
+/**
+ * Whether a custom verify layer's threshold is unreachable by its own width.
+ * @param layers - the authored topology.
+ * @returns the violation, or undefined when fine or no threshold quorum.
+ */
+export declare function customQuorumViolation(layers: readonly SessionLayerAuthor[]): {
+    readonly threshold: number;
+    readonly width: number;
+} | undefined;
+/**
+ * The structural error of a custom topology the designer must surface before
+ * the host's `resolveConfig` would refuse the run, or undefined when the
+ * skeleton is sound (prompts/ids still checked host-side). Returns a stable
+ * machine code the UI translates.
+ * @param layers - the authored topology.
+ * @returns a short code, or undefined.
+ */
+export declare function customStructuralError(layers: readonly SessionLayerAuthor[]): string | undefined;
+export {};
